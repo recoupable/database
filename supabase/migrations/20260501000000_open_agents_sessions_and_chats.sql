@@ -93,14 +93,20 @@ CREATE INDEX IF NOT EXISTS chat_reads_chat_id_idx ON chat_reads(chat_id);
 
 ALTER TABLE public.chat_reads ENABLE ROW LEVEL SECURITY;
 
--- Shares: public share-link records for chat threads
-CREATE TABLE IF NOT EXISTS shares (
-    id TEXT PRIMARY KEY,
-    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- Auto-update updated_at timestamps on row update.
+-- Uses the existing trigger_set_updated_at() function (see
+-- 20250130200000_create_social_fans_table.sql et al for the pattern).
+CREATE TRIGGER set_updated_at
+    BEFORE UPDATE ON sessions
+    FOR EACH ROW
+    EXECUTE FUNCTION trigger_set_updated_at();
 
-CREATE UNIQUE INDEX IF NOT EXISTS shares_chat_id_idx ON shares(chat_id);
+CREATE TRIGGER set_updated_at
+    BEFORE UPDATE ON chats
+    FOR EACH ROW
+    EXECUTE FUNCTION trigger_set_updated_at();
 
-ALTER TABLE public.shares ENABLE ROW LEVEL SECURITY;
+CREATE TRIGGER set_updated_at
+    BEFORE UPDATE ON chat_reads
+    FOR EACH ROW
+    EXECUTE FUNCTION trigger_set_updated_at();
