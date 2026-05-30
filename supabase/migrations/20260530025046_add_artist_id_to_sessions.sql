@@ -32,12 +32,11 @@ WHERE s."id" = uuid_generate_v5(
   AND r."artist_id" IS NOT NULL;
 
 -- Direct lookup of "all sessions for an artist".
+-- A composite `(account_id, artist_id)` index was considered for the
+-- sidebar's account+artist filter, but a pre-merge EXPLAIN against a
+-- dry-run on prod showed PG already prefers the existing
+-- `sessions_account_id_idx` (bitmap) + in-memory artist filter for this
+-- query shape — adding the composite paid storage + write cost for a
+-- plan the planner won't pick. Revisit if future query patterns change.
 CREATE INDEX IF NOT EXISTS "sessions_artist_id_idx"
     ON "public"."sessions" ("artist_id");
-
--- Composite scoping index for the sidebar's `(account, artist)` filter.
--- Chat-side recency ordering is satisfied by the existing
--- `chats_session_id_idx` + the sort on `chats.updated_at`, so this
--- index does not include `sessions.updated_at`.
-CREATE INDEX IF NOT EXISTS "sessions_account_artist_idx"
-    ON "public"."sessions" ("account_id", "artist_id");
