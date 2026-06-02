@@ -1,31 +1,10 @@
--- Credit-spend visibility digest aggregation.
---
--- Powers a 10-minute Vercel Cron in the api (`/api/internal/credit-spend-digest`)
--- that posts a top-spenders summary to Telegram. Aggregation lives in the
--- database (one round trip) rather than pulling rows into JS: the function
--- buckets `usage_events` over a time window and returns the top N accounts by
--- total credits spent, each enriched with how that spend breaks down.
---
--- Args:
---   p_since   lower bound on usage_events.created_at (inclusive). The caller
---             passes `now() - interval '10 minutes'`; the window is stateless
---             (minor boundary drift is accepted).
---   p_limit   max number of accounts to return, ranked by total spend desc.
---
--- Returns a jsonb array (ranked, highest spend first). Each element:
---   {
---     account_id, account_name, account_email,
---     total_cents,                         -- total credits spent in window
---     turn_count,                          -- number of usage_events rows
---     input_tokens, output_tokens, cached_input_tokens,
---     tool_calls,
---     main_cents, subagent_cents,          -- main vs subagent split (agent_type)
---     by_model                             -- { "<model_id>": <cents>, ... }
---   }
--- Empty window -> '[]'. The caller treats that as a no-op (no Telegram ping).
---
--- account_email is the most-recent email per account (account_emails ordered
--- by updated_at desc). model_id NULL is bucketed under 'unknown' in by_model.
+-- Top-spenders aggregation for the credit-spend digest cron.
+-- Returns a ranked jsonb array (highest spend first) of the top p_limit
+-- accounts by total credits over [p_since, now]; '[]' when empty. Each element:
+-- { account_id, account_name, account_email, total_cents, turn_count,
+--   input_tokens, output_tokens, cached_input_tokens, tool_calls,
+--   main_cents, subagent_cents, by_model: {"<model_id>": <cents>} }.
+-- account_email = most-recent per account; NULL model_id bucketed as 'unknown'.
 
 CREATE OR REPLACE FUNCTION public.get_credit_spend_digest(
     p_since timestamptz,
