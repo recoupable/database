@@ -33,7 +33,6 @@ CREATE OR REPLACE FUNCTION public.get_credit_spend_digest(
 ) RETURNS jsonb
     LANGUAGE sql
     STABLE
-    SECURITY DEFINER
     SET search_path = public, pg_temp
 AS $$
     WITH windowed AS (
@@ -93,9 +92,14 @@ AS $$
               LEFT JOIN emails                 e  ON e.account_id   = pa.account_id
               LEFT JOIN model_breakdown        mb ON mb.account_id  = pa.account_id
              ORDER BY pa.total_cents DESC
-             LIMIT p_limit
+             LIMIT greatest(least(coalesce(p_limit, 10), 1000), 1)
            ) ranked;
 $$;
 
+-- Trusted backend only: the api cron calls this with the service_role key.
+-- Cross-account spend + email data must never be reachable by end users, so
+-- revoke the implicit PUBLIC grant and do not grant to `authenticated`.
+REVOKE EXECUTE ON FUNCTION public.get_credit_spend_digest(timestamptz, integer) FROM PUBLIC;
+
 GRANT EXECUTE ON FUNCTION public.get_credit_spend_digest(timestamptz, integer)
-    TO authenticated, service_role;
+    TO service_role;
