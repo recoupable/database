@@ -1,187 +1,102 @@
 -- Play-count measurement store (recoupable/chat#1791).
--- Four tables: song_identifiers (platform ID <-> ISRC mapping), song_measurements
--- (append-only metric captures — the system of record for play counts),
--- songstats_quota_ledger (rolling-window spend tracking), and
--- songstats_backfill_queue (value-ranked historic backfill work list).
--- Builds on songs.isrc as the canonical key, mirroring catalog_songs/song_artists.
+-- Five tables built on songs.isrc as the canonical key:
+--   song_identifiers      external platform ID <-> ISRC mapping
+--   playcount_snapshots   snapshot jobs (mints snapshot_id for POST /research/snapshots)
+--   song_measurements     append-only metric captures — the system of record
+--   songstats_quota_ledger rolling-window Songstats spend, attributable per account
+--   songstats_backfill_queue value-ranked historic backfill work list
 
--- ============================================================
--- song_identifiers: maps external platform identifiers to ISRCs.
--- Needed because the Apify play-count actor takes Spotify album URLs in and
--- returns Spotify track IDs out — without this, actor results can't join songs.
--- ============================================================
-create table "public"."song_identifiers" (
-    "id" uuid not null default gen_random_uuid(),
-    "song" text not null,
-    "platform" text not null,
-    "identifier_type" text not null,
-    "value" text not null,
-    "created_at" timestamp with time zone not null default now(),
-    "updated_at" timestamp with time zone not null default now()
+-- Maps external platform identifiers (Spotify track/album IDs, TikTok sound IDs)
+-- to ISRCs. The Apify actor takes album URLs in and returns Spotify track IDs
+-- out; without this mapping, actor results can't join to songs.
+CREATE TABLE song_identifiers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  song TEXT NOT NULL REFERENCES songs(isrc) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  identifier_type TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- an external identifier resolves to exactly one recording
+  UNIQUE (platform, identifier_type, value)
 );
-
-alter table "public"."song_identifiers" enable row level security;
-
-CREATE UNIQUE INDEX song_identifiers_pkey ON public.song_identifiers USING btree (id);
-alter table "public"."song_identifiers" add constraint "song_identifiers_pkey" PRIMARY KEY using index "song_identifiers_pkey";
-
--- An external identifier resolves to exactly one recording (reverse lookup path)
-CREATE UNIQUE INDEX song_identifiers_platform_type_value_unique ON public.song_identifiers USING btree (platform, identifier_type, value);
-alter table "public"."song_identifiers" add constraint "song_identifiers_platform_type_value_unique" UNIQUE using index "song_identifiers_platform_type_value_unique";
-
-CREATE INDEX idx_song_identifiers_song ON public.song_identifiers USING btree (song);
-
-alter table "public"."song_identifiers" add constraint "song_identifiers_song_fkey" FOREIGN KEY (song) REFERENCES "public"."songs"(isrc) ON DELETE CASCADE not valid;
-alter table "public"."song_identifiers" validate constraint "song_identifiers_song_fkey";
-
-grant delete on table "public"."song_identifiers" to "service_role";
-grant insert on table "public"."song_identifiers" to "service_role";
-grant references on table "public"."song_identifiers" to "service_role";
-grant select on table "public"."song_identifiers" to "service_role";
-grant trigger on table "public"."song_identifiers" to "service_role";
-grant truncate on table "public"."song_identifiers" to "service_role";
-grant update on table "public"."song_identifiers" to "service_role";
-
+CREATE INDEX idx_song_identifiers_song ON song_identifiers (song);
+ALTER TABLE public.song_identifiers ENABLE ROW LEVEL SECURITY;
 CREATE TRIGGER set_updated_at
-    BEFORE UPDATE ON song_identifiers
-    FOR EACH ROW
-    EXECUTE FUNCTION trigger_set_updated_at();
+  BEFORE UPDATE ON song_identifiers
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
 
-COMMENT ON TABLE "public"."song_identifiers" IS 'Maps external platform identifiers (Spotify track/album IDs, TikTok sound IDs) to songs by ISRC';
-COMMENT ON COLUMN "public"."song_identifiers"."song" IS 'Foreign key reference to songs table (ISRC)';
-COMMENT ON COLUMN "public"."song_identifiers"."platform" IS 'Platform the identifier belongs to (e.g. spotify, tiktok)';
-COMMENT ON COLUMN "public"."song_identifiers"."identifier_type" IS 'Kind of identifier (e.g. track_id, album_id, sound_id)';
-COMMENT ON COLUMN "public"."song_identifiers"."value" IS 'The external identifier value';
-
--- ============================================================
--- song_measurements: append-only metric captures. The system of record for
--- play counts — every Apify snapshot, Songstats backfill, and future
--- granted-analytics import writes one immutable row per capture.
--- Deliberately no set_updated_at trigger and no UPDATE grant beyond house
--- baseline usage: rows are written once and never modified.
--- ============================================================
-create table "public"."song_measurements" (
-    "id" uuid not null default gen_random_uuid(),
-    "song" text not null,
-    "platform" text not null,
-    "metric" text not null,
-    "value" bigint not null,
-    "captured_at" timestamp with time zone not null,
-    "source" text not null,
-    "raw_ref" text,
-    "created_at" timestamp with time zone not null default now()
+-- Snapshot jobs: one row per POST /api/research/snapshots. Mints snapshot_id,
+-- tracks async state, and carries the cost estimate returned before execution.
+-- (account, created_at) supports the per-org monthly cap (429).
+CREATE TABLE playcount_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  account UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  catalog UUID REFERENCES catalogs(id) ON DELETE SET NULL,
+  album_ids TEXT[],
+  isrcs TEXT[],
+  platforms TEXT[] NOT NULL,
+  schedule TEXT NOT NULL DEFAULT 'once' CHECK (schedule IN ('once', 'monthly')),
+  state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'running', 'done', 'failed')),
+  album_count INTEGER CHECK (album_count >= 0),
+  estimated_cost_usd NUMERIC(10, 4) CHECK (estimated_cost_usd >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-alter table "public"."song_measurements" enable row level security;
-
-CREATE UNIQUE INDEX song_measurements_pkey ON public.song_measurements USING btree (id);
-alter table "public"."song_measurements" add constraint "song_measurements_pkey" PRIMARY KEY using index "song_measurements_pkey";
-
--- Fetch-once: one capture per (song, platform, metric, capture time)
-CREATE UNIQUE INDEX song_measurements_capture_unique ON public.song_measurements USING btree (song, platform, metric, captured_at);
-alter table "public"."song_measurements" add constraint "song_measurements_capture_unique" UNIQUE using index "song_measurements_capture_unique";
-
--- Latest-per-track and time-series reads
-CREATE INDEX idx_song_measurements_series ON public.song_measurements USING btree (song, platform, metric, captured_at DESC);
-
-alter table "public"."song_measurements" add constraint "song_measurements_song_fkey" FOREIGN KEY (song) REFERENCES "public"."songs"(isrc) ON DELETE CASCADE not valid;
-alter table "public"."song_measurements" validate constraint "song_measurements_song_fkey";
-
-grant delete on table "public"."song_measurements" to "service_role";
-grant insert on table "public"."song_measurements" to "service_role";
-grant references on table "public"."song_measurements" to "service_role";
-grant select on table "public"."song_measurements" to "service_role";
-grant trigger on table "public"."song_measurements" to "service_role";
-grant truncate on table "public"."song_measurements" to "service_role";
-grant update on table "public"."song_measurements" to "service_role";
-
-COMMENT ON TABLE "public"."song_measurements" IS 'Append-only platform metric captures per song (system of record for play counts); rows are immutable once written';
-COMMENT ON COLUMN "public"."song_measurements"."song" IS 'Foreign key reference to songs table (ISRC)';
-COMMENT ON COLUMN "public"."song_measurements"."platform" IS 'Platform measured (e.g. spotify, tiktok)';
-COMMENT ON COLUMN "public"."song_measurements"."metric" IS 'Metric name (e.g. platform_displayed_play_count)';
-COMMENT ON COLUMN "public"."song_measurements"."value" IS 'Metric value at capture time';
-COMMENT ON COLUMN "public"."song_measurements"."captured_at" IS 'When the value was observed on the platform';
-COMMENT ON COLUMN "public"."song_measurements"."source" IS 'Provenance label (e.g. apify_spotify_playcount, songstats, granted_analytics)';
-COMMENT ON COLUMN "public"."song_measurements"."raw_ref" IS 'Pointer to the archived raw vendor payload (e.g. actor run id), nullable';
-
--- ============================================================
--- songstats_quota_ledger: every Songstats API hit is recorded so spend over
--- the rolling 30-day window can be computed before making new calls.
--- ============================================================
-create table "public"."songstats_quota_ledger" (
-    "id" uuid not null default gen_random_uuid(),
-    "hits" integer not null,
-    "purpose" text,
-    "spent_at" timestamp with time zone not null default now()
-);
-
-alter table "public"."songstats_quota_ledger" enable row level security;
-
-CREATE UNIQUE INDEX songstats_quota_ledger_pkey ON public.songstats_quota_ledger USING btree (id);
-alter table "public"."songstats_quota_ledger" add constraint "songstats_quota_ledger_pkey" PRIMARY KEY using index "songstats_quota_ledger_pkey";
-
-alter table "public"."songstats_quota_ledger" add constraint "songstats_quota_ledger_hits_positive" CHECK (hits > 0);
-
-CREATE INDEX idx_songstats_quota_ledger_spent_at ON public.songstats_quota_ledger USING btree (spent_at);
-
-grant delete on table "public"."songstats_quota_ledger" to "service_role";
-grant insert on table "public"."songstats_quota_ledger" to "service_role";
-grant references on table "public"."songstats_quota_ledger" to "service_role";
-grant select on table "public"."songstats_quota_ledger" to "service_role";
-grant trigger on table "public"."songstats_quota_ledger" to "service_role";
-grant truncate on table "public"."songstats_quota_ledger" to "service_role";
-grant update on table "public"."songstats_quota_ledger" to "service_role";
-
-COMMENT ON TABLE "public"."songstats_quota_ledger" IS 'Songstats API spend ledger; sum(hits) over the rolling 30-day window enforces the quota budget';
-COMMENT ON COLUMN "public"."songstats_quota_ledger"."hits" IS 'Number of Songstats resource hits spent';
-COMMENT ON COLUMN "public"."songstats_quota_ledger"."purpose" IS 'What the hits were spent on (e.g. backfill ISRC, endpoint name)';
-COMMENT ON COLUMN "public"."songstats_quota_ledger"."spent_at" IS 'When the hits were spent';
-
--- ============================================================
--- songstats_backfill_queue: value-ranked work list for historic backfill.
--- The backfill worker claims rows FOR UPDATE SKIP LOCKED in rank order and
--- spends Songstats quota only on the tracks where history is worth most.
--- ============================================================
-create table "public"."songstats_backfill_queue" (
-    "id" uuid not null default gen_random_uuid(),
-    "song" text not null,
-    "rank_score" bigint not null default 0,
-    "status" text not null default 'pending',
-    "created_at" timestamp with time zone not null default now(),
-    "updated_at" timestamp with time zone not null default now()
-);
-
-alter table "public"."songstats_backfill_queue" enable row level security;
-
-CREATE UNIQUE INDEX songstats_backfill_queue_pkey ON public.songstats_backfill_queue USING btree (id);
-alter table "public"."songstats_backfill_queue" add constraint "songstats_backfill_queue_pkey" PRIMARY KEY using index "songstats_backfill_queue_pkey";
-
--- One queue entry per song
-CREATE UNIQUE INDEX songstats_backfill_queue_song_unique ON public.songstats_backfill_queue USING btree (song);
-alter table "public"."songstats_backfill_queue" add constraint "songstats_backfill_queue_song_unique" UNIQUE using index "songstats_backfill_queue_song_unique";
-
-alter table "public"."songstats_backfill_queue" add constraint "songstats_backfill_queue_status_check" CHECK (status in ('pending', 'in_progress', 'done', 'failed'));
-
-alter table "public"."songstats_backfill_queue" add constraint "songstats_backfill_queue_song_fkey" FOREIGN KEY (song) REFERENCES "public"."songs"(isrc) ON DELETE CASCADE not valid;
-alter table "public"."songstats_backfill_queue" validate constraint "songstats_backfill_queue_song_fkey";
-
--- Worker drain order: pending rows by descending value
-CREATE INDEX idx_songstats_backfill_queue_drain ON public.songstats_backfill_queue USING btree (status, rank_score DESC);
-
-grant delete on table "public"."songstats_backfill_queue" to "service_role";
-grant insert on table "public"."songstats_backfill_queue" to "service_role";
-grant references on table "public"."songstats_backfill_queue" to "service_role";
-grant select on table "public"."songstats_backfill_queue" to "service_role";
-grant trigger on table "public"."songstats_backfill_queue" to "service_role";
-grant truncate on table "public"."songstats_backfill_queue" to "service_role";
-grant update on table "public"."songstats_backfill_queue" to "service_role";
-
+CREATE INDEX idx_playcount_snapshots_account_created ON playcount_snapshots (account, created_at);
+ALTER TABLE public.playcount_snapshots ENABLE ROW LEVEL SECURITY;
 CREATE TRIGGER set_updated_at
-    BEFORE UPDATE ON songstats_backfill_queue
-    FOR EACH ROW
-    EXECUTE FUNCTION trigger_set_updated_at();
+  BEFORE UPDATE ON playcount_snapshots
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
 
-COMMENT ON TABLE "public"."songstats_backfill_queue" IS 'Value-ranked queue of songs awaiting Songstats historic backfill; drained by the api backfill workflow as quota allows';
-COMMENT ON COLUMN "public"."songstats_backfill_queue"."song" IS 'Foreign key reference to songs table (ISRC)';
-COMMENT ON COLUMN "public"."songstats_backfill_queue"."rank_score" IS 'Backfill priority — all-time play count descending';
-COMMENT ON COLUMN "public"."songstats_backfill_queue"."status" IS 'pending | in_progress | done | failed';
+-- Append-only metric captures. Every Apify snapshot, Songstats backfill, and
+-- future granted-analytics import writes one row per capture; rows are never
+-- updated or deleted by application code, so there is no set_updated_at
+-- trigger. data_source matches the published contract field (docs#238):
+-- apify_spotify_playcount | songstats | granted_analytics.
+CREATE TABLE song_measurements (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  song TEXT NOT NULL REFERENCES songs(isrc) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  value BIGINT NOT NULL CHECK (value >= 0),
+  captured_at TIMESTAMPTZ NOT NULL,
+  data_source TEXT NOT NULL,
+  raw_ref TEXT,
+  snapshot UUID REFERENCES playcount_snapshots(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- fetch-once: one capture per (song, platform, metric, capture time)
+  UNIQUE (song, platform, metric, captured_at)
+);
+CREATE INDEX idx_song_measurements_series ON song_measurements (song, platform, metric, captured_at DESC);
+ALTER TABLE public.song_measurements ENABLE ROW LEVEL SECURITY;
+
+-- Songstats spend ledger: sum(hits) over the rolling 30-day window enforces
+-- the quota budget; account attributes spend to the org that triggered it
+-- (nullable for system-initiated backfill).
+CREATE TABLE songstats_quota_ledger (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  account UUID REFERENCES accounts(id) ON DELETE SET NULL,
+  hits INTEGER NOT NULL CHECK (hits > 0),
+  purpose TEXT,
+  spent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_songstats_quota_ledger_spent_at ON songstats_quota_ledger (spent_at);
+CREATE INDEX idx_songstats_quota_ledger_account_spent ON songstats_quota_ledger (account, spent_at);
+ALTER TABLE public.songstats_quota_ledger ENABLE ROW LEVEL SECURITY;
+
+-- Value-ranked backfill work list; the worker claims rows FOR UPDATE SKIP
+-- LOCKED in (status, rank_score DESC) order. rank_score = all-time play count.
+CREATE TABLE songstats_backfill_queue (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  song TEXT NOT NULL UNIQUE REFERENCES songs(isrc) ON DELETE CASCADE,
+  rank_score BIGINT NOT NULL DEFAULT 0 CHECK (rank_score >= 0),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'done', 'failed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_songstats_backfill_queue_drain ON songstats_backfill_queue (status, rank_score DESC);
+ALTER TABLE public.songstats_backfill_queue ENABLE ROW LEVEL SECURITY;
+CREATE TRIGGER set_updated_at
+  BEFORE UPDATE ON songstats_backfill_queue
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
