@@ -57,14 +57,14 @@ WITH dupes AS (
         AND NOT EXISTS (
           SELECT 1 FROM public.account_catalogs ac WHERE ac.account = aai.account_id))
 )
-SELECT d.id AS dupe_id, d.name, min(c.id) AS canonical_id
+SELECT d.id AS dupe_id, d.name, (array_agg(c.id ORDER BY c.id))[1] AS canonical_id
 FROM dupes d
 JOIN public.accounts c
   ON c.name = d.name
  AND c.id <> d.id
  AND EXISTS (SELECT 1 FROM public.song_artists sa WHERE sa.artist = c.id)
 GROUP BY d.id, d.name
-HAVING count(*) = 1; -- unambiguous twin only (min() is then the single match)
+HAVING count(*) = 1; -- unambiguous twin only (the aggregate is then the single match)
 
 -- One repointable roster row per (account, canonical): deterministic pick
 -- (oldest first), skipping accounts that already have the canonical.
