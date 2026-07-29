@@ -19,7 +19,23 @@
 -- Everything folded/deleted is recorded in zz_cleanup_manifest_20260729b
 -- BEFORE any mutation. Idempotent: re-running finds empty sets.
 
--- ---------- Part 0: manifest ----------
+-- ---------- Part 0: manifests ----------
+-- The #49 manifest was captured via MCP, outside migration history — so on a
+-- fresh environment (Supabase Preview branches, local dev) it doesn't exist.
+-- Stub it so the migration is self-sufficient: IF NOT EXISTS no-ops on prod
+-- (where it's populated); on fresh envs it's empty and every downstream set
+-- resolves to zero rows.
+CREATE TABLE IF NOT EXISTS public.zz_dupe_manifest_20260729 (
+  captured_at timestamptz,
+  spotify_id text,
+  dupe_id uuid,
+  canonical_id uuid,
+  dupe_name text,
+  canonical_name text,
+  affected_account uuid,
+  already_has_canonical boolean
+);
+
 CREATE TABLE IF NOT EXISTS public.zz_cleanup_manifest_20260729b (
   captured_at timestamptz DEFAULT now(),
   action text,
