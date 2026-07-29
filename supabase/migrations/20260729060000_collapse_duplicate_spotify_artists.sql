@@ -61,18 +61,24 @@ JOIN spotify_canonicals c ON c.spotify_id = l.spotify_id
 WHERE l.artist_id <> c.canonical_id;
 
 -- 1a. Repoint roster rows to the canonical where the account doesn't have it.
+-- At most ONE row per (account, canonical) — an account can roster SEVERAL
+-- duplicates of the same canonical (measured on prod: two accounts hold 3
+-- each), and account_artist_ids has UNIQUE (account_id, artist_id), so a
+-- per-dupe update would collide with itself mid-statement. DISTINCT ON picks
+-- the survivor; 1b deletes the rest.
 UPDATE public.account_artist_ids aai
-SET artist_id = m.canonical_id
-FROM spotify_dupe_map m
-WHERE aai.artist_id = m.dupe_id
-  AND aai.id = (
-    SELECT aai2.id FROM public.account_artist_ids aai2
-    WHERE aai2.account_id = aai.account_id AND aai2.artist_id = m.dupe_id
-    ORDER BY aai2.id LIMIT 1)
-  AND NOT EXISTS (
+SET artist_id = pick.canonical_id
+FROM (
+  SELECT DISTINCT ON (aai2.account_id, m.canonical_id) aai2.id, m.canonical_id
+  FROM public.account_artist_ids aai2
+  JOIN spotify_dupe_map m ON m.dupe_id = aai2.artist_id
+  WHERE NOT EXISTS (
     SELECT 1 FROM public.account_artist_ids existing
-    WHERE existing.account_id = aai.account_id
-      AND existing.artist_id = m.canonical_id);
+    WHERE existing.account_id = aai2.account_id
+      AND existing.artist_id = m.canonical_id)
+  ORDER BY aai2.account_id, m.canonical_id, aai2.id
+) pick
+WHERE aai.id = pick.id;
 
 -- 1b. Delete leftover roster rows still pointing at a duplicate
 --     (the account already rosters the canonical).
