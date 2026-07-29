@@ -85,7 +85,9 @@ SELECT gen_random_uuid() AS id
 WHERE NOT EXISTS (
   SELECT 1 FROM public.socials s JOIN public.account_socials a ON a.social_id = s.id
   JOIN public.accounts acc ON acc.id = a.account_id
-  WHERE s.profile_url ILIKE '%6eUKZXaKkcviH0Ku9w2n3V%' AND acc.name = 'Ed Sheeran');
+  WHERE s.profile_url ILIKE '%6eUKZXaKkcviH0Ku9w2n3V%' AND acc.name = 'Ed Sheeran')
+  -- fresh-env guard: without an Ed Sheeran social row there is nothing to split
+  AND EXISTS (SELECT 1 FROM public.socials s2 WHERE s2.profile_url ILIKE '%6eUKZXaKkcviH0Ku9w2n3V%');
 
 INSERT INTO public.accounts (id, name)
 SELECT id, 'Ed Sheeran' FROM new_ed;
@@ -126,11 +128,14 @@ WHERE asoc.account_id = '95bfbf52-a8b9-472b-a61c-2c067f650ffe'
 -- Give the Disclosure row its real Spotify social (patrick@'s artist).
 INSERT INTO public.socials (username, profile_url)
 SELECT 'disclosure', 'open.spotify.com/artist/6nS5roXSAGhTGr34W6n7Et'
-WHERE NOT EXISTS (SELECT 1 FROM public.socials WHERE profile_url ILIKE '%6nS5roXSAGhTGr34W6n7Et%');
+WHERE NOT EXISTS (SELECT 1 FROM public.socials WHERE profile_url ILIKE '%6nS5roXSAGhTGr34W6n7Et%')
+  -- fresh-env guard: the Disclosure account row only exists on prod
+  AND EXISTS (SELECT 1 FROM public.accounts WHERE id = '95bfbf52-a8b9-472b-a61c-2c067f650ffe');
 INSERT INTO public.account_socials (account_id, social_id)
 SELECT '95bfbf52-a8b9-472b-a61c-2c067f650ffe', s.id
 FROM public.socials s
 WHERE s.profile_url ILIKE '%6nS5roXSAGhTGr34W6n7Et%'
+  AND EXISTS (SELECT 1 FROM public.accounts WHERE id = '95bfbf52-a8b9-472b-a61c-2c067f650ffe')
   AND NOT EXISTS (SELECT 1 FROM public.account_socials x
                   WHERE x.account_id = '95bfbf52-a8b9-472b-a61c-2c067f650ffe' AND x.social_id = s.id)
 ORDER BY s.updated_at DESC LIMIT 1;
