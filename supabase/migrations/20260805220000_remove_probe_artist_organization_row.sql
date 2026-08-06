@@ -10,10 +10,18 @@
 -- recoupable/api#818 -- and it also left this row behind. It is test debris,
 -- not customer data.
 --
--- The row is inert: both ids are the all-zero UUID, which matches no account,
--- so nothing joins to it. It is removed because orphaned junk in a join table
--- is a trap for whoever next audits organization membership, not because it
--- is doing harm.
+-- The row is inert, though not for the reason first assumed. Both ids are the
+-- all-zero UUID, which IS a real row in `accounts` named "Nullable Account" --
+-- a sentinel, not a missing reference (the FKs on this table would have
+-- rejected the insert otherwise). Measured on prod before writing this:
+-- artist_organization_ids holds 82 rows and exactly ONE references the
+-- sentinel, this one. account_artist_ids (1512 rows) and
+-- account_organization_ids (127 rows) reference it zero times, so all-zero is
+-- not a legitimate value anywhere in these join tables.
+--
+-- It is removed because a membership row linking the sentinel to itself means
+-- nothing and is a trap for whoever next audits organization membership, not
+-- because it is doing harm.
 --
 -- Safety:
 --   * Targeted by id AND guarded on the all-zero shape, so a wrong or reused
