@@ -1,13 +1,14 @@
 -- chat#1979: workspaces removed as an account type; organizations supersede them.
 --
--- Convert-to-roster (owner decision 2026-08-21): usage of the 45 prod
+-- Convert-to-roster (owner decision 2026-08-21): usage of the 46 prod
 -- workspaces is light but real, so plain deletion would strand owner access
 -- to those accounts and their chat rooms. Workspaces behave as pseudo-artists
 -- (rooms hang off artist_id), so each (account_id, workspace_id) pair becomes
 -- an account_artist_ids (account_id, artist_id) roster row — owners keep every
 -- workspace and chat through the normal artist path — and the join table is
--- then dropped. The join rows are snapshotted on the issue:
--- https://github.com/recoupable/chat/issues/1979#issuecomment-5363749640
+-- then dropped. The join rows are snapshotted on the issue (46 rows, 2 pairs
+-- already rostered, so 44 inserts expected):
+-- https://github.com/recoupable/app/issues/1979#issuecomment-5432260065
 --
 -- Dropping account_workspace_ids takes its own PK, both outbound FKs to
 -- accounts, its set_updated_at trigger, its two indexes, and its RLS state
