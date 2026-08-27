@@ -17,7 +17,7 @@
 --   * balances render 10,000x too large;
 --   * every charge is 10,000x too small, i.e. effectively free.
 -- Run it in a window where writes are quiet, with the api and chat deploys
--- going out immediately after. Widening (20260824090000) must already be on
+-- going out immediately after. Widening (20260827020000) must already be on
 -- main, or the largest rows overflow int4 partway through this UPDATE.
 --
 -- Reversible by dividing by the same factor: 10,000 is exact in integer
@@ -41,7 +41,7 @@ BEGIN
            AND data_type <> 'bigint'
     ) THEN
         RAISE EXCEPTION
-            'Credit columns are not BIGINT yet. Apply 20260824090000_widen_credit_columns_to_bigint.sql first.';
+            'Credit columns are not BIGINT yet. Apply 20260827020000_widen_credit_columns_to_bigint.sql first.';
     END IF;
 END $$;
 
