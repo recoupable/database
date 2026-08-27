@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS public.social_snapshots (
     -- The scrape's completion time; the day partition is derived once here so
     -- readers never re-derive it in a different timezone.
     captured_at     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-    captured_on     DATE NOT NULL DEFAULT (now() AT TIME ZONE 'utc')::date,
+    -- Always derived from captured_at by the trigger below (a generated
+    -- column can't: timezone() is STABLE, not IMMUTABLE), so a caller that
+    -- supplies a historical captured_at can never land on the wrong day.
+    captured_on     DATE NOT NULL,
     follower_count  BIGINT NOT NULL CHECK (follower_count >= 0),
     following_count BIGINT CHECK (following_count IS NULL OR following_count >= 0),
     -- Lifetime post count where the platform reports one (Instagram
@@ -33,6 +36,20 @@ CREATE TABLE IF NOT EXISTS public.social_snapshots (
     post_count      BIGINT CHECK (post_count IS NULL OR post_count >= 0),
     UNIQUE (social_id, captured_on)
 );
+
+-- captured_on is never written by callers; it is the UTC day of captured_at.
+CREATE OR REPLACE FUNCTION public.social_snapshots_set_captured_on()
+RETURNS TRIGGER AS $fn$
+BEGIN
+    NEW.captured_on := (NEW.captured_at AT TIME ZONE 'utc')::date;
+    RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS set_captured_on ON public.social_snapshots;
+CREATE TRIGGER set_captured_on
+    BEFORE INSERT OR UPDATE OF captured_at ON public.social_snapshots
+    FOR EACH ROW EXECUTE FUNCTION public.social_snapshots_set_captured_on();
 
 -- The history read: one social's points, newest first, bounded by days.
 CREATE INDEX IF NOT EXISTS social_snapshots_social_captured_idx
@@ -46,10 +63,9 @@ ALTER TABLE public.social_snapshots ENABLE ROW LEVEL SECURITY;
 -- Backfill: history starts today rather than at the next scrape. One row per
 -- social that already has a follower count, stamped with the socials row's
 -- updated_at (the last scrape that wrote it). Idempotent via the unique key.
-INSERT INTO public.social_snapshots (social_id, captured_at, captured_on, follower_count, following_count)
+INSERT INTO public.social_snapshots (social_id, captured_at, follower_count, following_count)
 SELECT s.id,
        s.updated_at,
-       (s.updated_at AT TIME ZONE 'utc')::date,
        s."followerCount",
        CASE WHEN s."followingCount" >= 0 THEN s."followingCount" END
 FROM public.socials s
