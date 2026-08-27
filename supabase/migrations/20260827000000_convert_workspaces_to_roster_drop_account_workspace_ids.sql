@@ -29,7 +29,7 @@
 -- (20260708200000), and the DROP is IF EXISTS.
 
 -- 1) Delete the empty workspaces (explicit ids from the snapshot) ---------------
-DO 22039
+DO $$
 BEGIN
     IF to_regclass('public.account_workspace_ids') IS NOT NULL THEN
         DELETE FROM public.account_workspace_ids
@@ -73,7 +73,7 @@ BEGIN
         'fc82d6bb-3581-46ce-869f-17073036c80c'
         );
     END IF;
-END 22039;
+END $$;
 
 DELETE FROM public.accounts a
 WHERE a.id IN (
@@ -120,7 +120,7 @@ WHERE a.id IN (
   );
 
 -- 2) Roster every remaining workspace pair as a plain artist row --------------
-DO 22039
+DO $$
 BEGIN
     IF to_regclass('public.account_workspace_ids') IS NOT NULL THEN
         INSERT INTO public.account_artist_ids (account_id, artist_id)
@@ -130,7 +130,7 @@ BEGIN
           AND workspace_id IS NOT NULL
         ON CONFLICT (account_id, artist_id) DO NOTHING;
     END IF;
-END 22039;
+END $$;
 
 -- 3) Drop the join table ------------------------------------------------------
 DROP TABLE IF EXISTS public.account_workspace_ids;
