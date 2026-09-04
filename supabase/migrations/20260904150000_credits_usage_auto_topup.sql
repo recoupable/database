@@ -7,8 +7,11 @@
 -- Units: auto_topup_amount and auto_topup_threshold are credit micro-dollars
 -- (1 credit = $0.000001), the same unit as remaining_credits.
 --
--- Constraints are added NOT VALID and validated separately so the ALTER never
--- holds a scan-length lock on a live table; every existing row satisfies them
+-- Constraints are added NOT VALID here and validated in the next migration
+-- file (20260904150100). Each file runs in its own transaction, so the
+-- ACCESS EXCLUSIVE lock this ALTER takes is released before the validation
+-- scan, which then runs under SHARE UPDATE EXCLUSIVE and does not block
+-- balance reads or writes. Every existing row satisfies the constraints
 -- (enabled defaults to false, the amounts default to null).
 
 ALTER TABLE public.credits_usage
@@ -29,11 +32,6 @@ ALTER TABLE public.credits_usage
   ADD CONSTRAINT credits_usage_auto_topup_enabled_needs_settings
     CHECK (NOT auto_topup_enabled
            OR (auto_topup_amount IS NOT NULL AND auto_topup_threshold IS NOT NULL)) NOT VALID;
-
-ALTER TABLE public.credits_usage VALIDATE CONSTRAINT credits_usage_auto_topup_amount_positive;
-ALTER TABLE public.credits_usage VALIDATE CONSTRAINT credits_usage_auto_topup_threshold_nonnegative;
-ALTER TABLE public.credits_usage VALIDATE CONSTRAINT credits_usage_auto_topup_threshold_below_amount;
-ALTER TABLE public.credits_usage VALIDATE CONSTRAINT credits_usage_auto_topup_enabled_needs_settings;
 
 COMMENT ON COLUMN public.credits_usage.auto_topup_enabled IS
   'Opt-in flag for automatic credit top-ups. Default false.';
