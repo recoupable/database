@@ -14,6 +14,7 @@ begin
  if public.claim_context_request(a,(req->>'id')::uuid,gen_random_uuid()) then raise exception 'duplicate worker accepted'; end if;
  payload := '{"trackId":"AAAAAAAAAAAAAAAAAAAAAA","title":"First track","isrc":"USABC2600001","durationSeconds":180,"artists":[{"id":"1234567890123456789012","name":"Test artist"}],"release":{"id":"abcdefghijklmnopqrstuv","title":"Album","date":"2026-09-01","datePrecision":"day","artwork":[]},"previewUrl":null}';
  result := public.commit_spotify_context(a,(req->>'id')::uuid,token,payload);
+ if (select album from public.songs where isrc='USABC2600001') is distinct from 'Album' or (select lyrics from public.songs where isrc='USABC2600001') is distinct from '' then raise exception 'Required song fields missing'; end if;
  if result->>'status' <> 'completed' then raise exception 'metadata did not complete'; end if;
  docs := public.read_context_documents(a,(req->>'id')::uuid);
  if jsonb_array_length(docs) <> 2 then raise exception 'expected artist and release documents: %',docs; end if;

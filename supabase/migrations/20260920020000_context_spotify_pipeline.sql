@@ -81,13 +81,13 @@ begin
  select * into strict req from public.context_requests where id=p_request and owner_id=p_owner for update;
  if req.status<>'running' or req.claim_token is distinct from p_token then raise exception 'Worker no longer owns request'; end if;
  select * into strict resource from public.context_resources where id=req.resource_id;
- if resource.provider_id<>p_payload->>'trackId' then raise exception 'Recording mismatch'; end if;
+ if resource.provider_id is distinct from p_payload->>'trackId' then raise exception 'Recording mismatch'; end if;
  isrc:=p_payload->>'isrc';
  if isrc is null or isrc !~ '^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$' then raise exception 'Verified ISRC required'; end if;
  -- Existing conflicting track identifiers must never be overwritten.
  if exists(select 1 from public.song_identifiers where platform='spotify' and identifier_type='track_id' and value=resource.provider_id and song<>isrc)
  then raise exception 'Conflicting recording identity'; end if;
- insert into public.songs(isrc,name) values(isrc,p_payload->>'title') on conflict do nothing;
+ insert into public.songs(isrc,name,album,lyrics) values(isrc,p_payload->>'title',coalesce(p_payload->'release'->>'title',''),'') on conflict do nothing;
  insert into public.song_identifiers(song,platform,identifier_type,value)
  select isrc,'spotify','track_id',resource.provider_id where not exists(select 1 from public.song_identifiers si where si.song=isrc and si.platform='spotify' and si.identifier_type='track_id' and si.value=resource.provider_id);
  insert into public.context_subjects(kind,song_isrc) values('recording',isrc) on conflict(song_isrc) do update set song_isrc=excluded.song_isrc returning id into recording;
