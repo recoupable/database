@@ -1,7 +1,9 @@
+-- Requires the existing socials URL unique index and cleaning trigger, as in production.
 begin;
 do $$
 declare a uuid := gen_random_uuid(); req jsonb; second jsonb; token uuid := gen_random_uuid(); payload jsonb; result jsonb; docs jsonb;
 begin
+ insert into public.socials(profile_url,username) values('https://open.spotify.com/artist/1234567890123456789012','Existing unlinked profile');
  insert into public.accounts(id,name) values(a,'Pipeline test');
  req := public.create_context_request(a,a,'test-one','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{"url":"https://open.spotify.com/track/AAAAAAAAAAAAAAAAAAAAAA","topics":["release_metadata","artist_metadata"]}','AAAAAAAAAAAAAAAAAAAAAA');
  second := public.create_context_request(a,a,'test-one','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{"url":"https://open.spotify.com/track/AAAAAAAAAAAAAAAAAAAAAA"}','AAAAAAAAAAAAAAAAAAAAAA');
@@ -15,6 +17,8 @@ begin
  payload := '{"trackId":"AAAAAAAAAAAAAAAAAAAAAA","title":"First track","isrc":"USABC2600001","durationSeconds":180,"artists":[{"id":"1234567890123456789012","name":"Test artist"}],"release":{"id":"abcdefghijklmnopqrstuv","title":"Album","date":"2026-09-01","datePrecision":"day","artwork":[]},"previewUrl":null}';
  result := public.commit_spotify_context(a,(req->>'id')::uuid,token,payload);
  if (select album from public.songs where isrc='USABC2600001') is distinct from 'Album' then raise exception 'Required song fields missing'; end if;
+ if (select count(*) from public.socials where profile_url='open.spotify.com/artist/1234567890123456789012') <> 1 then raise exception 'orphan social not reused'; end if;
+ if not exists(select 1 from public.account_socials a join public.socials s on s.id=a.social_id where s.profile_url='open.spotify.com/artist/1234567890123456789012') then raise exception 'orphan social not linked'; end if;
  if result->>'status' <> 'completed' then raise exception 'metadata did not complete'; end if;
  docs := public.read_context_documents(a,(req->>'id')::uuid);
  if jsonb_array_length(docs) <> 2 then raise exception 'expected artist and release documents: %',docs; end if;
