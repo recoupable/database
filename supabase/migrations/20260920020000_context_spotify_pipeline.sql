@@ -87,7 +87,12 @@ begin
  -- Existing conflicting track identifiers must never be overwritten.
  if exists(select 1 from public.song_identifiers where platform='spotify' and identifier_type='track_id' and value=resource.provider_id and song<>isrc)
  then raise exception 'Conflicting recording identity'; end if;
- insert into public.songs(isrc,name,album,lyrics) values(isrc,p_payload->>'title',coalesce(p_payload->'release'->>'title',''),'') on conflict do nothing;
+ -- Older installations require lyrics; production stores lyrics in context instead.
+ if exists(select 1 from information_schema.columns where table_schema='public' and table_name='songs' and column_name='lyrics') then
+  execute 'insert into public.songs(isrc,name,album,lyrics) values($1,$2,$3,$4) on conflict do nothing' using isrc,p_payload->>'title',coalesce(p_payload->'release'->>'title',''),'';
+ else
+  insert into public.songs(isrc,name,album) values(isrc,p_payload->>'title',p_payload->'release'->>'title') on conflict do nothing;
+ end if;
  insert into public.song_identifiers(song,platform,identifier_type,value)
  select isrc,'spotify','track_id',resource.provider_id where not exists(select 1 from public.song_identifiers si where si.song=isrc and si.platform='spotify' and si.identifier_type='track_id' and si.value=resource.provider_id);
  insert into public.context_subjects(kind,song_isrc) values('recording',isrc) on conflict(song_isrc) do update set song_isrc=excluded.song_isrc returning id into recording;
