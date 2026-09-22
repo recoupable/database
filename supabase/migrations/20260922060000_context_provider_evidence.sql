@@ -7,9 +7,9 @@ declare req public.context_requests; previous public.context_attempts; found_res
 begin
  select * into strict req from public.context_requests where owner_id=p_owner and id=p_request;
  if not (req.output->'subjectIds' ? (p_module->>'subjectId')) or req.status not in ('partial','completed') then raise exception 'Subject outside completed metadata request'; end if;
- if p_module->>'fingerprint' !~ '^[a-f0-9]{64}$' or p_module->>'topic' not in ('catalog_metadata','lyrics','song_summary','artwork_branding','artist_research','musicbrainz_recordings','mlc_recordings','mlc_works','chartmetric_candidates','social_context','catalog_valuation') then raise exception 'Invalid enrichment module'; end if;
+ if p_module->>'fingerprint' !~ '^[a-f0-9]{64}$' or p_module->>'topic' not in ('catalog_metadata','lyrics','song_summary','artwork_branding','artist_research','musicbrainz_recordings','mlc_recordings','mlc_works','mlc_work_candidates','chartmetric_candidates','social_context','catalog_valuation') then raise exception 'Invalid enrichment module'; end if;
  if coalesce(p_module->>'evidenceKind','interpretation') not in ('observation','estimate','interpretation') then raise exception 'Invalid evidence kind'; end if;
- if p_module->>'topic' in ('musicbrainz_recordings','mlc_recordings','mlc_works','chartmetric_candidates','social_context') and coalesce(p_module->>'evidenceKind','')<>'observation' then raise exception 'Provider lookup requires observation evidence'; end if;
+ if p_module->>'topic' in ('musicbrainz_recordings','mlc_recordings','mlc_works','mlc_work_candidates','chartmetric_candidates','social_context') and coalesce(p_module->>'evidenceKind','')<>'observation' then raise exception 'Provider lookup requires observation evidence'; end if;
  if p_module->>'topic'='catalog_valuation' and coalesce(p_module->>'evidenceKind','')<>'estimate' then raise exception 'Valuation requires estimate evidence'; end if;
  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_owner::text||(p_module->>'fingerprint'),0));
  select r.* into found_result from public.context_results r join public.context_documents d on d.current_result_id=r.id
