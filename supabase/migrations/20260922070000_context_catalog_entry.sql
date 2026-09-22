@@ -38,4 +38,17 @@ begin
 end $$;
 revoke all on function public.create_catalog_context_request(uuid,uuid,uuid,text) from public,anon,authenticated;
 grant execute on function public.create_catalog_context_request(uuid,uuid,uuid,text) to service_role;
+create function public.resolve_context_catalog(p_owner uuid,p_request uuid,p_subject uuid)
+returns jsonb language plpgsql set search_path='' as $$
+declare catalog uuid;
+begin
+ select s.catalog_id into catalog from public.context_subjects s
+ join public.context_requests r on r.owner_id=p_owner and r.id=p_request and r.status in ('partial','completed') and r.output->'subjectIds' ? s.id::text
+ join public.account_catalogs ac on ac.catalog=s.catalog_id and ac.account=p_owner
+ where s.id=p_subject and s.kind='catalog';
+ if catalog is null then raise exception 'Catalog context not accessible in selected workspace'; end if;
+ return jsonb_build_object('catalogId',catalog);
+end $$;
+revoke all on function public.resolve_context_catalog(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.resolve_context_catalog(uuid,uuid,uuid) to service_role;
 commit;

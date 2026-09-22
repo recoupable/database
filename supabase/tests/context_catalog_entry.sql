@@ -9,6 +9,7 @@ begin
  if r->>'id' is distinct from again->>'id' or r->>'status'<>'partial' then raise exception 'Idempotent request failed'; end if;
  subject:=(r->'output'->'subjectIds'->>0)::uuid;
  if not exists(select 1 from public.context_subjects where id=subject and kind='catalog' and catalog_id=cat) then raise exception 'Catalog identity missing'; end if;
+ if public.resolve_context_catalog(owner,(r->>'id')::uuid,subject)->>'catalogId' is distinct from cat::text then raise exception 'Wrong catalog resolved'; end if;
  if not exists(select 1 from public.context_documents where owner_id=owner and subject_id=subject and topic='catalog_identity') then raise exception 'Catalog metadata missing'; end if;
  begin
   perform public.create_catalog_context_request(owner,owner,other,'fixture-denied-'||cat::text);
