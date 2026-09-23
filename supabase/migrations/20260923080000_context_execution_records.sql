@@ -204,4 +204,26 @@ begin
 end $$;
 revoke all on function public.list_context_request_targets(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.list_context_request_targets(uuid,uuid) to service_role;
+
+-- Discover a saved request's execution IDs without exposing raw provider evidence.
+create function public.list_context_request_executions(p_owner uuid,p_request uuid)
+returns jsonb language plpgsql set search_path='' as $$
+declare request_row public.context_requests; executions jsonb;
+begin
+ select * into strict request_row from public.context_requests
+ where id=p_request and owner_id=p_owner;
+ select coalesce(jsonb_agg(jsonb_build_object(
+  'executionId', e.id,
+  'policyVersion', e.policy_version,
+  'createdAt', e.created_at,
+  'nodeCount', jsonb_array_length(e.plan),
+  'outcomeCount', (select count(*) from public.context_execution_outcomes o
+    where o.execution_id=e.id and o.owner_id=p_owner)
+ ) order by e.created_at desc,e.id desc),'[]'::jsonb)
+ into executions from public.context_executions e
+ where e.owner_id=p_owner and e.request_id=p_request;
+ return executions;
+end $$;
+revoke all on function public.list_context_request_executions(uuid,uuid) from public,anon,authenticated;
+grant execute on function public.list_context_request_executions(uuid,uuid) to service_role;
 commit;
