@@ -137,4 +137,64 @@ begin
 end $$;
 revoke all on function public.claim_context_execution_node(uuid,uuid,text) from public,anon,authenticated;
 grant execute on function public.claim_context_execution_node(uuid,uuid,text) to service_role;
+
+-- Only the service can turn a saved request into planner targets. The request's
+-- subject order is preserved, but identity is independently checked per subject.
+create function public.list_context_request_targets(p_owner uuid,p_request uuid)
+returns jsonb language plpgsql set search_path='' as $$
+declare req public.context_requests; targets jsonb; expected_count integer;
+begin
+ select * into strict req from public.context_requests where id=p_request and owner_id=p_owner for share;
+ if req.status not in ('partial','completed') then raise exception 'Request is not ready for enrichment'; end if;
+ if jsonb_typeof(req.output->'subjectIds') is distinct from 'array' then raise exception 'Request has no subject list'; end if;
+ expected_count:=jsonb_array_length(req.output->'subjectIds');
+ if expected_count>100 then raise exception 'Request has too many subjects'; end if;
+ if exists(select 1 from jsonb_array_elements_text(req.output->'subjectIds') id where id.value !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+ then raise exception 'Context request has missing subjects'; end if;
+ with ordered as (
+  select id.value::uuid as subject_id,id.ordinality as position
+  from jsonb_array_elements_text(req.output->'subjectIds') with ordinality as id(value,ordinality)
+ ), verified as (
+  select ordered.position,s.id,s.kind,s.song_isrc,s.artist_id,s.resource_id,
+   exists(select 1 from public.context_resource_links l
+    join public.context_resources r on r.id=l.resource_id
+    where l.subject_id=s.id and l.resource_id=req.resource_id
+      and l.relation='identity' and l.status='accepted'
+      and r.provider='spotify' and r.resource_kind='track') as track_identity,
+   exists(select 1 from public.context_resource_links l
+    join public.context_resources r on r.id=l.resource_id
+    where l.subject_id=s.id and l.resource_id=req.resource_id
+      and l.relation='release_member' and l.status='accepted'
+      and r.provider='spotify' and r.resource_kind='track') as release_member,
+   exists(select 1 from public.context_resource_links l
+    join public.context_resources r on r.id=l.resource_id
+    where l.subject_id=s.id and l.relation='identity' and l.status='accepted'
+      and r.provider='spotify' and r.resource_kind='artist'
+      and exists(select 1 from public.context_resource_links credit
+       where credit.resource_id=req.resource_id and credit.subject_id=s.id
+        and credit.relation='credited_artist' and credit.status='accepted')) as artist_identity,
+   exists(select 1 from public.context_resources r where r.id=s.resource_id
+      and r.provider='spotify' and r.resource_kind='release') as canonical_release
+  from ordered left join public.context_subjects s on s.id=ordered.subject_id
+ )
+ select coalesce(jsonb_agg(jsonb_build_object(
+  'subjectId',id,'kind',kind,
+  'identityConfirmed',case kind
+   when 'recording' then song_isrc is not null and track_identity
+   when 'release' then canonical_release and release_member
+   when 'artist' then artist_id is not null and artist_identity
+   else false end,
+  'availableFields',case
+   when kind='recording' and song_isrc is not null then jsonb_build_array('isrc')
+   when kind='release' and canonical_release and release_member then jsonb_build_array('spotify_id')
+   when kind='artist' and artist_identity then jsonb_build_array('spotify_id')
+   else '[]'::jsonb end,
+  'reusableModules','[]'::jsonb
+ ) order by position),'[]'::jsonb) into targets from verified;
+ if jsonb_array_length(targets)<>expected_count or exists(select 1 from jsonb_array_elements(targets) t where t->'subjectId'='null'::jsonb)
+ then raise exception 'Context request has missing subjects'; end if;
+ return targets;
+end $$;
+revoke all on function public.list_context_request_targets(uuid,uuid) from public,anon,authenticated;
+grant execute on function public.list_context_request_targets(uuid,uuid) to service_role;
 commit;
