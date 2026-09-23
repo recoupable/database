@@ -13,3 +13,9 @@ This is the additive foundation for recoupable/app#2116, not activation of the c
 After both Context Engine migrations, run `supabase/tests/context_pipeline.sql`. It exercises real transactions for retry identity, input conflicts, worker claims, saved context, artist reuse across two tracks and owner-scoped reads. It rolls back synthetic fixtures. Use a disposable database with the existing accounts, songs, social/roster and organization tables; do not run test fixtures in production.
 
 The opt-in API `lib/context/__tests__/pipeline.live.test.ts` uses the same stored functions against local PostgreSQL with real Spotify metadata. This is not deployed Supabase or paid-enrichment validation.
+
+## Execution records
+
+Run `context_execution_records.sql` after the provider-evidence and execution-record migrations in a disposable database. It verifies immutable plan replay, conflicting replay, duplicate keys, subject scope, owner isolation, idempotent outcomes, unknown nodes, invented success receipts, a real claim/save receipt, cancellation and browser privilege restrictions. Fixtures roll back.
+
+These records store a server-built plan and policy version, not a spending authorization. The server must validate graph cycles and its policy, recheck workspace access, and reserve/settle paid work separately. Outcome writes remain available after cancellation so in-flight work can leave an accurate trace. Evidence writes retain their separate request guards. Success receipts currently support only the three audited dispatcher modules. Durable orchestration and inspector loading are subsequent integration work.
