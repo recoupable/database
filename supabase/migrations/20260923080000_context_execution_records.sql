@@ -71,7 +71,16 @@ begin
   select 1 from public.context_results r where r.id::text=p_outcome->'receipt'->>'resultId'
    and r.owner_id=p_owner and r.subject_id::text=node->>'subjectId'
    and node->>'state' in ('ready_for_dispatch','reuse_candidate')
-   and r.topic=case node->>'module' when 'musicbrainz' then 'musicbrainz_recordings' when 'mlc_recording' then 'mlc_recordings' when 'spotify_release' then 'spotify_release_context' end
+   and r.topic=case node->>'module'
+    when 'musicbrainz' then 'musicbrainz_recordings'
+    when 'mlc_recording' then 'mlc_recordings'
+    when 'mlc_search' then 'mlc_work_candidates'
+    when 'mlc_work' then 'mlc_works'
+    when 'songstats' then 'songstats_context'
+    when 'saved_socials' then 'social_context'
+    when 'catalog_valuation' then 'catalog_valuation'
+    when 'spotify_release' then 'spotify_release_context'
+   end
  ) then raise exception 'Execution evidence does not match node'; end if;
  insert into public.context_execution_outcomes(execution_id,owner_id,node_key,outcome)
  values(p_execution,p_owner,p_node_key,p_outcome) on conflict(execution_id,node_key) do nothing;

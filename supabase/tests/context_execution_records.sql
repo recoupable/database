@@ -1,7 +1,7 @@
 -- Disposable fixture database only; no provider calls.
 begin;
 do $$
-declare owner uuid:=gen_random_uuid(); request uuid; resource uuid; subject uuid; run uuid:=gen_random_uuid(); plan jsonb; first jsonb; claim jsonb; saved jsonb; success_run uuid:=gen_random_uuid();
+declare owner uuid:=gen_random_uuid(); request uuid; resource uuid; subject uuid; run uuid:=gen_random_uuid(); plan jsonb; first jsonb; claim jsonb; saved jsonb; success_run uuid:=gen_random_uuid(); pair jsonb; mapped_run uuid;
 begin
  insert into accounts(id) values(owner);
  insert into context_resources(provider,resource_kind,provider_id,canonical_url) values('spotify','release',run::text,'https://example.com/test') returning id into resource;
@@ -53,6 +53,26 @@ begin
  perform public.create_context_execution(owner,request,success_run,'policy-v1',jsonb_set(plan,'{0,state}','"ready_for_dispatch"'));
  perform public.save_context_execution_outcome(owner,success_run,subject::text||':spotify_release',jsonb_build_object('status','saved','receipt',saved));
  if public.read_context_execution(owner,success_run)->'outcomes'->0->'outcome'->>'status'<>'saved' then raise exception 'Successful evidence not traced'; end if;
+ -- Exercise each implemented collector's exact result topic. Kind/identifier
+ -- eligibility is checked by the planner and collector; this checks storage binding.
+ for pair in select value from jsonb_array_elements('[
+  ["musicbrainz","musicbrainz_recordings"],["mlc_recording","mlc_recordings"],
+  ["mlc_search","mlc_work_candidates"],["mlc_work","mlc_works"],
+  ["songstats","songstats_context"],["saved_socials","social_context"],
+  ["catalog_valuation","catalog_valuation"]]'::jsonb) loop
+  mapped_run:=gen_random_uuid();
+  claim:=public.claim_context_enrichment(owner,request,jsonb_build_object('key',mapped_run::text,'topic',pair->>1,'subjectId',subject,'provider','fixture','model','none','evidenceKind',case when pair->>0='catalog_valuation' then 'estimate' else 'observation' end,'fingerprint',encode(sha256(convert_to(mapped_run::text,'UTF8')),'hex'),'sources',jsonb_build_array(jsonb_build_object('url','https://example.com/test','kind','provider_metadata','content',jsonb_build_object('fixture',true)))));
+  saved:=public.complete_context_enrichment(owner,request,(claim->>'attemptId')::uuid,'{"content":{"fixture":true},"coverage":"full","trace":{},"costStatus":"unknown"}');
+  perform public.create_context_execution(owner,request,mapped_run,'policy-v1',jsonb_build_array(jsonb_build_object('key',subject::text||':'||(pair->>0),'subjectId',subject,'module',pair->>0,'state','ready_for_dispatch','dependsOn',jsonb_build_array())));
+  perform public.save_context_execution_outcome(owner,mapped_run,subject::text||':'||(pair->>0),jsonb_build_object('status','saved','receipt',saved));
+  if public.read_context_execution(owner,mapped_run)->'outcomes'->0->'outcome'->>'status'<>'saved' then raise exception 'Mapped collector outcome was not traced'; end if;
+ end loop;
+ mapped_run:=gen_random_uuid();
+ perform public.create_context_execution(owner,request,mapped_run,'policy-v1',jsonb_build_array(jsonb_build_object('key',subject::text||':musicbrainz','subjectId',subject,'module','musicbrainz','state','ready_for_dispatch','dependsOn',jsonb_build_array())));
+ begin
+  perform public.save_context_execution_outcome(owner,mapped_run,subject::text||':musicbrainz',jsonb_build_object('status','saved','receipt',saved));
+  raise exception 'TEST_FAILURE: wrong collector topic accepted';
+ exception when others then if SQLERRM<>'Execution evidence does not match node' then raise; end if; end;
  update context_requests set status='cancelled' where id=request;
  -- Cancelled runs remain inspectable, but cannot be started again.
  perform public.read_context_execution(owner,run);
