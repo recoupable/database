@@ -174,7 +174,11 @@ begin
        where credit.resource_id=req.resource_id and credit.subject_id=s.id
         and credit.relation='credited_artist' and credit.status='accepted')) as artist_identity,
    exists(select 1 from public.context_resources r where r.id=s.resource_id
-      and r.provider='spotify' and r.resource_kind='release') as canonical_release
+      and r.provider='spotify' and r.resource_kind='release') as canonical_release,
+   exists(select 1 from public.account_catalogs ac
+    join public.context_resources r on r.id=req.resource_id
+    where ac.account=p_owner and ac.catalog=s.catalog_id and r.provider='recoup'
+     and r.resource_kind='catalog' and r.provider_id=s.catalog_id::text) as catalog_access
   from ordered left join public.context_subjects s on s.id=ordered.subject_id
  )
  select coalesce(jsonb_agg(jsonb_build_object(
@@ -183,12 +187,14 @@ begin
    when 'recording' then song_isrc is not null and track_identity
    when 'release' then canonical_release and release_member
    when 'artist' then artist_id is not null and artist_identity
+   when 'catalog' then catalog_access
    else false end,
   'availableFields',case
    when kind='recording' and song_isrc is not null and track_identity then jsonb_build_array('isrc','spotify_id')
    when kind='recording' and song_isrc is not null then jsonb_build_array('isrc')
    when kind='release' and canonical_release and release_member then jsonb_build_array('spotify_id')
    when kind='artist' and artist_identity then jsonb_build_array('spotify_id')
+   when kind='catalog' and catalog_access then jsonb_build_array('catalog_account_link')
    else '[]'::jsonb end,
   'reusableModules','[]'::jsonb
  ) order by position),'[]'::jsonb) into targets from verified;
