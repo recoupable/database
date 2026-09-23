@@ -13,3 +13,9 @@ This is the additive foundation for recoupable/app#2116, not activation of the c
 After both Context Engine migrations, run `supabase/tests/context_pipeline.sql`. It exercises real transactions for retry identity, input conflicts, worker claims, saved context, artist reuse across two tracks and owner-scoped reads. It rolls back synthetic fixtures. Use a disposable database with the existing accounts, songs, social/roster and organization tables; do not run test fixtures in production.
 
 The opt-in API `lib/context/__tests__/pipeline.live.test.ts` uses the same stored functions against local PostgreSQL with real Spotify metadata. This is not deployed Supabase or paid-enrichment validation.
+
+## Enrichment completion scope
+
+After the enrichment migrations through `20260923070000_context_enrichment_scope.sql`, run `context_completion_scope.sql` in a disposable local database. It rolls back its fixtures and checks cancellation after claim, removed/missing/malformed subject membership, wrong owner, valid completion, duplicate completion, and cancellation before an idempotent response. Rejected completions must leave no documents, results or sources.
+
+Both claim and completion acquire a shared request row lock before examining scope. This permits concurrent collectors while preventing status/output updates until their transaction finishes. API actor/workspace authorization remains required; this migration does not enable workflow dispatch.
