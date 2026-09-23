@@ -185,6 +185,7 @@ begin
    when 'artist' then artist_id is not null and artist_identity
    else false end,
   'availableFields',case
+   when kind='recording' and song_isrc is not null and track_identity then jsonb_build_array('isrc','spotify_id')
    when kind='recording' and song_isrc is not null then jsonb_build_array('isrc')
    when kind='release' and canonical_release and release_member then jsonb_build_array('spotify_id')
    when kind='artist' and artist_identity then jsonb_build_array('spotify_id')

@@ -23,7 +23,7 @@ begin
  target_data:=public.list_context_request_targets(owner,request);
  if jsonb_array_length(target_data)<>3 then raise exception 'Not all linked subjects returned'; end if;
  first:=target_data->0; second:=target_data->1; third:=target_data->2;
- if first->>'subjectId'<>recording::text or first->>'kind'<>'recording' or first->>'identityConfirmed'<>'true' or first->'availableFields' ? 'isrc' is not true then raise exception 'Recording target not verified'; end if;
+ if first->>'subjectId'<>recording::text or first->>'kind'<>'recording' or first->>'identityConfirmed'<>'true' or first->'availableFields' ? 'isrc' is not true or first->'availableFields' ? 'spotify_id' is not true then raise exception 'Recording target not verified'; end if;
  if second->>'subjectId'<>release_subject::text or second->>'kind'<>'release' or second->>'identityConfirmed'<>'true' or second->'availableFields' ? 'spotify_id' is not true then raise exception 'Release target not verified'; end if;
  if third->>'subjectId'<>artist_subject::text or third->>'kind'<>'artist' or third->>'identityConfirmed'<>'true' or third->'availableFields' ? 'spotify_id' is not true then raise exception 'Artist target not verified'; end if;
  insert into context_resources(provider,resource_kind,provider_id,canonical_url)
