@@ -90,4 +90,45 @@ begin
 end $$;
 revoke all on function public.create_context_execution(uuid,uuid,uuid,text,jsonb),public.save_context_execution_outcome(uuid,uuid,text,jsonb),public.read_context_execution(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.create_context_execution(uuid,uuid,uuid,text,jsonb),public.save_context_execution_outcome(uuid,uuid,text,jsonb),public.read_context_execution(uuid,uuid) to service_role;
+
+-- One durable claim per runnable node. An uncertain claim never expires into an automatic retry.
+create table public.context_execution_node_claims (
+ id uuid primary key default gen_random_uuid(),
+ execution_id uuid not null,
+ owner_id uuid not null,
+ node_key text not null,
+ claimed_at timestamptz not null default now(),
+ unique(execution_id,node_key),
+ foreign key(execution_id,owner_id) references public.context_executions(id,owner_id)
+);
+alter table public.context_execution_node_claims enable row level security;
+revoke all on public.context_execution_node_claims from public,anon,authenticated;
+grant all on public.context_execution_node_claims to service_role;
+
+create function public.claim_context_execution_node(p_owner uuid,p_execution uuid,p_node_key text)
+returns jsonb language plpgsql set search_path='' as $$
+declare run public.context_executions; req public.context_requests; node jsonb; dep text; inserted uuid; existing public.context_execution_node_claims;
+begin
+ select * into strict run from public.context_executions where id=p_execution and owner_id=p_owner;
+ select * into strict req from public.context_requests where id=run.request_id and owner_id=p_owner for share;
+ if req.status not in ('partial','completed') then raise exception 'Request is not ready for enrichment'; end if;
+ select value into node from jsonb_array_elements(run.plan) where value->>'key'=p_node_key;
+ if node is null then raise exception 'Unknown execution node'; end if;
+ if jsonb_typeof(req.output->'subjectIds') is distinct from 'array' or (req.output->'subjectIds' ? (node->>'subjectId')) is not true then raise exception 'Execution subject no longer in request'; end if;
+ if node->>'state' not in ('ready_for_dispatch','reuse_candidate') then raise exception 'Execution node is not runnable'; end if;
+ -- An outcome from an older run format is never permission for a new provider call.
+ if exists(select 1 from public.context_execution_outcomes where execution_id=p_execution and owner_id=p_owner and node_key=p_node_key)
+ then return jsonb_build_object('state','unknown'); end if;
+ for dep in select jsonb_array_elements_text(node->'dependsOn') loop
+  if not exists(select 1 from public.context_execution_outcomes o where o.execution_id=p_execution and o.owner_id=p_owner
+    and o.node_key=dep and o.outcome->>'status' in ('saved','reused'))
+  then raise exception 'Execution prerequisites not complete'; end if;
+ end loop;
+ insert into public.context_execution_node_claims(execution_id,owner_id,node_key)
+ values(p_execution,p_owner,p_node_key) on conflict(execution_id,node_key) do nothing returning id into inserted;
+ select * into strict existing from public.context_execution_node_claims where execution_id=p_execution and node_key=p_node_key;
+ return jsonb_build_object('state',case when inserted is not null then 'claimed' else 'unknown' end,'claimId',existing.id);
+end $$;
+revoke all on function public.claim_context_execution_node(uuid,uuid,text) from public,anon,authenticated;
+grant execute on function public.claim_context_execution_node(uuid,uuid,text) to service_role;
 commit;
