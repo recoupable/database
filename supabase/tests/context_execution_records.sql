@@ -10,7 +10,8 @@ begin
  values(owner,owner,resource,run::text,repeat('c',64),'{}','completed',jsonb_build_object('subjectIds',jsonb_build_array(subject))) returning id into request;
  plan:=jsonb_build_array(jsonb_build_object('key',subject::text||':spotify_release','subjectId',subject,'module','spotify_release','state','blocked','dependsOn',jsonb_build_array(),'reasons',jsonb_build_array('Collection not permitted')));
  first:=public.create_context_execution(owner,request,run,'policy-v1',plan);
- if first is distinct from public.create_context_execution(owner,request,run,'policy-v1',plan) then raise exception 'Replay changed run'; end if;
+ if first->>'created' is distinct from 'true' then raise exception 'Fresh run not marked created'; end if;
+ if public.create_context_execution(owner,request,run,'policy-v1',plan)->>'created' is distinct from 'false' then raise exception 'Replay could dispatch again'; end if;
  begin
   perform public.create_context_execution(owner,request,run,'policy-v2',plan);
   raise exception 'TEST_FAILURE: plan replaced';

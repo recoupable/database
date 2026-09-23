@@ -28,7 +28,7 @@ grant all on public.context_executions,public.context_execution_outcomes to serv
 
 create function public.create_context_execution(p_owner uuid,p_request uuid,p_execution uuid,p_policy_version text,p_plan jsonb)
 returns jsonb language plpgsql set search_path='' as $$
-declare req public.context_requests; existing public.context_executions; node jsonb; keys text[]:='{}'; dep text;
+declare req public.context_requests; existing public.context_executions; node jsonb; keys text[]:='{}'; dep text; inserted_id uuid;
 begin
  select * into strict req from public.context_requests where id=p_request and owner_id=p_owner for share;
  if req.status not in ('partial','completed') then raise exception 'Request is not ready for enrichment'; end if;
@@ -51,10 +51,11 @@ begin
   end loop;
  end loop;
  insert into public.context_executions(id,owner_id,request_id,policy_version,plan)
- values(p_execution,p_owner,p_request,p_policy_version,p_plan) on conflict(id) do nothing;
+ values(p_execution,p_owner,p_request,p_policy_version,p_plan) on conflict(id) do nothing returning id into inserted_id;
  select * into strict existing from public.context_executions where id=p_execution;
  if existing.owner_id<>p_owner or existing.request_id<>p_request or existing.policy_version<>p_policy_version or existing.plan<>p_plan then raise exception 'Execution identity conflict'; end if;
- return to_jsonb(existing);
+ -- A replay may inspect the record, but must not dispatch the same provider work again.
+ return to_jsonb(existing)||jsonb_build_object('created',inserted_id is not null);
 end $$;
 
 create function public.save_context_execution_outcome(p_owner uuid,p_execution uuid,p_node_key text,p_outcome jsonb)
