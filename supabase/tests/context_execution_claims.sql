@@ -33,6 +33,7 @@ begin
  update context_requests set output=jsonb_build_object('subjectIds',jsonb_build_array(subject)) where id=request;
  claim:=public.claim_context_execution_node(owner,execution,first_key);
  if claim->>'state'<>'claimed' then raise exception 'First claim not granted'; end if;
+ if public.read_context_execution(owner,execution)->'claims'->0->>'state' is distinct from 'unknown' then raise exception 'Unresolved claim not visible'; end if;
  if public.claim_context_execution_node(owner,execution,first_key)->>'state'<>'unknown' then raise exception 'Repeated claim could dispatch'; end if;
  begin
   perform public.claim_context_execution_node(gen_random_uuid(),execution,first_key);
@@ -45,6 +46,7 @@ begin
  evidence_claim:=public.claim_context_enrichment(owner,request,jsonb_build_object('key','fixture','topic','musicbrainz_recordings','subjectId',subject,'provider','fixture','model','none','evidenceKind','observation','fingerprint',encode(sha256(convert_to(execution::text,'UTF8')),'hex'),'sources',jsonb_build_array(jsonb_build_object('url','https://example.com/test','kind','provider_metadata','content',jsonb_build_object('fixture',true)))));
  saved:=public.complete_context_enrichment(owner,request,(evidence_claim->>'attemptId')::uuid,'{"content":{"fixture":true},"coverage":"full","trace":{},"costStatus":"unknown"}');
  perform public.save_context_execution_outcome(owner,execution,first_key,jsonb_build_object('status','saved','receipt',saved));
+ if public.read_context_execution(owner,execution)->'claims'->0->>'state' is distinct from 'saved' then raise exception 'Claim outcome not visible'; end if;
  if public.claim_context_execution_node(owner,execution,first_key)->>'state'<>'unknown' then raise exception 'Completed node claimed again'; end if;
  claim:=public.claim_context_execution_node(owner,execution,second_key);
  if claim->>'state'<>'claimed' then raise exception 'Dependency-complete claim not granted'; end if;

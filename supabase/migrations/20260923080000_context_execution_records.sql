@@ -82,11 +82,17 @@ end $$;
 
 create function public.read_context_execution(p_owner uuid,p_execution uuid)
 returns jsonb language plpgsql set search_path='' as $$
-declare run public.context_executions; outcomes jsonb;
+declare run public.context_executions; outcomes jsonb; claims jsonb;
 begin
  select * into strict run from public.context_executions where id=p_execution and owner_id=p_owner;
  select coalesce(jsonb_agg(to_jsonb(o) order by o.node_key),'[]'::jsonb) into outcomes from public.context_execution_outcomes o where o.execution_id=p_execution and o.owner_id=p_owner;
- return to_jsonb(run)||jsonb_build_object('outcomes',outcomes);
+ -- A claim without an outcome is uncertain. Expose that state to the authorized reader without raw provider data.
+ select coalesce(jsonb_agg(jsonb_build_object('nodeKey',c.node_key,'claimedAt',c.claimed_at,
+  'state',coalesce(o.outcome->>'status','unknown')) order by c.claimed_at,c.node_key),'[]'::jsonb)
+ into claims from public.context_execution_node_claims c
+ left join public.context_execution_outcomes o on o.execution_id=c.execution_id and o.owner_id=c.owner_id and o.node_key=c.node_key
+ where c.execution_id=p_execution and c.owner_id=p_owner;
+ return to_jsonb(run)||jsonb_build_object('outcomes',outcomes,'claims',claims);
 end $$;
 revoke all on function public.create_context_execution(uuid,uuid,uuid,text,jsonb),public.save_context_execution_outcome(uuid,uuid,text,jsonb),public.read_context_execution(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.create_context_execution(uuid,uuid,uuid,text,jsonb),public.save_context_execution_outcome(uuid,uuid,text,jsonb),public.read_context_execution(uuid,uuid) to service_role;
