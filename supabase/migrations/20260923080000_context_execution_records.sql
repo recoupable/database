@@ -214,6 +214,42 @@ end $$;
 revoke all on function public.list_context_request_targets(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.list_context_request_targets(uuid,uuid) to service_role;
 
+-- Resolve Songstats lookup identifiers only from accepted request/subject links.
+-- A caller-supplied ISRC or Spotify ID is never enough to attach evidence.
+create function public.resolve_context_songstats_lookup(p_owner uuid,p_request uuid,p_subject uuid,p_kind text,p_identifier text)
+returns jsonb language plpgsql set search_path='' as $$
+declare target jsonb; req public.context_requests; value text; matches integer;
+begin
+ if (p_kind,p_identifier) not in (('recording','isrc'),('recording','spotify_id'),('artist','spotify_id'))
+ then raise exception 'Unsupported Songstats lookup'; end if;
+ select t.value into target from jsonb_array_elements(public.list_context_request_targets(p_owner,p_request)) t(value)
+ where t.value->>'subjectId'=p_subject::text;
+ if target is null or target->>'kind'<>p_kind or target->>'identityConfirmed'<>'true'
+  or (target->'availableFields' ? p_identifier) is not true
+ then raise exception 'Songstats identifier not confirmed for subject'; end if;
+ select * into strict req from public.context_requests where id=p_request and owner_id=p_owner;
+ if p_identifier='isrc' then
+  select s.song_isrc into strict value from public.context_subjects s where s.id=p_subject and s.kind='recording';
+  return jsonb_build_object('kind','recording','isrc',value);
+ end if;
+ if p_kind='recording' then
+  select r.provider_id into strict value from public.context_resources r
+  join public.context_resource_links l on l.resource_id=r.id and l.subject_id=p_subject and l.relation='identity' and l.status='accepted'
+  where r.id=req.resource_id and r.provider='spotify' and r.resource_kind='track';
+  return jsonb_build_object('kind','recording','spotifyId',value);
+ end if;
+ select count(distinct r.provider_id),min(r.provider_id) into matches,value
+ from public.context_resource_links l join public.context_resources r on r.id=l.resource_id
+ where l.subject_id=p_subject and l.relation='identity' and l.status='accepted'
+  and r.provider='spotify' and r.resource_kind='artist'
+  and exists(select 1 from public.context_resource_links credit where credit.resource_id=req.resource_id
+   and credit.subject_id=p_subject and credit.relation='credited_artist' and credit.status='accepted');
+ if matches<>1 then raise exception 'Ambiguous Songstats artist identity'; end if;
+ return jsonb_build_object('kind','artist','spotifyId',value);
+end $$;
+revoke all on function public.resolve_context_songstats_lookup(uuid,uuid,uuid,text,text) from public,anon,authenticated;
+grant execute on function public.resolve_context_songstats_lookup(uuid,uuid,uuid,text,text) to service_role;
+
 -- Bounded expansion of an account-linked catalog. Membership here means only
 -- that the ISRC is listed in this catalog; it implies no artist, roster or rights link.
 create function public.list_context_catalog_members(p_owner uuid,p_request uuid,p_subject uuid,p_after_isrc text default null,p_limit integer default 100)
