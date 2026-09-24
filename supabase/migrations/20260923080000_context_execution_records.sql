@@ -214,6 +214,23 @@ end $$;
 revoke all on function public.list_context_request_targets(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.list_context_request_targets(uuid,uuid) to service_role;
 
+-- A request subject ID alone does not prove a recording belongs to the track.
+-- Resolve the ISRC only after checking the accepted request-track identity.
+create function public.resolve_context_recording_isrc(p_owner uuid,p_request uuid,p_subject uuid)
+returns jsonb language plpgsql set search_path='' as $$
+declare target jsonb; value text;
+begin
+ select t.value into target from jsonb_array_elements(public.list_context_request_targets(p_owner,p_request)) t(value)
+ where t.value->>'subjectId'=p_subject::text;
+ if target is null or target->>'kind'<>'recording' or target->>'identityConfirmed'<>'true'
+  or (target->'availableFields' ? 'isrc') is not true
+ then raise exception 'Recording identity not confirmed for request'; end if;
+ select s.song_isrc into strict value from public.context_subjects s where s.id=p_subject and s.kind='recording';
+ return jsonb_build_object('subjectId',p_subject,'isrc',value);
+end $$;
+revoke all on function public.resolve_context_recording_isrc(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.resolve_context_recording_isrc(uuid,uuid,uuid) to service_role;
+
 -- Resolve Songstats lookup identifiers only from accepted request/subject links.
 -- A caller-supplied ISRC or Spotify ID is never enough to attach evidence.
 create function public.resolve_context_songstats_lookup(p_owner uuid,p_request uuid,p_subject uuid,p_kind text,p_identifier text)
@@ -229,8 +246,7 @@ begin
  then raise exception 'Songstats identifier not confirmed for subject'; end if;
  select * into strict req from public.context_requests where id=p_request and owner_id=p_owner;
  if p_identifier='isrc' then
-  select s.song_isrc into strict value from public.context_subjects s where s.id=p_subject and s.kind='recording';
-  return jsonb_build_object('kind','recording','isrc',value);
+  return jsonb_build_object('kind','recording','isrc',public.resolve_context_recording_isrc(p_owner,p_request,p_subject)->>'isrc');
  end if;
  if p_kind='recording' then
   select r.provider_id into strict value from public.context_resources r

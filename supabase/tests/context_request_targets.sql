@@ -26,6 +26,8 @@ begin
  if first->>'subjectId'<>recording::text or first->>'kind'<>'recording' or first->>'identityConfirmed'<>'true' or first->'availableFields' ? 'isrc' is not true or first->'availableFields' ? 'spotify_id' is not true then raise exception 'Recording target not verified'; end if;
  if second->>'subjectId'<>release_subject::text or second->>'kind'<>'release' or second->>'identityConfirmed'<>'true' or second->'availableFields' ? 'spotify_id' is not true then raise exception 'Release target not verified'; end if;
  if third->>'subjectId'<>artist_subject::text or third->>'kind'<>'artist' or third->>'identityConfirmed'<>'true' or third->'availableFields' ? 'spotify_id' is not true then raise exception 'Artist target not verified'; end if;
+ if public.resolve_context_recording_isrc(owner,request,recording)->>'isrc' is distinct from 'USAT22103065'
+ then raise exception 'Request recording ISRC was not resolved'; end if;
  if public.resolve_context_songstats_lookup(owner,request,recording,'recording','isrc')->>'isrc' is distinct from 'USAT22103065'
   or public.resolve_context_songstats_lookup(owner,request,recording,'recording','spotify_id')->>'spotifyId' is distinct from '2zpWJxfuyxqCYhpsAqH7Uh'
   or public.resolve_context_songstats_lookup(owner,request,artist_subject,'artist','spotify_id')->>'spotifyId' is distinct from '1QzqrU2lmiW9l1mSvliVoM'
@@ -52,7 +54,17 @@ begin
   perform public.resolve_context_songstats_lookup(owner,request,recording,'recording','spotify_id');
   raise exception 'TEST_FAILURE: unrelated track resolved';
  exception when others then if SQLERRM<>'Songstats identifier not confirmed for subject' then raise; end if; end;
+ begin
+  perform public.resolve_context_recording_isrc(owner,request,recording);
+  raise exception 'TEST_FAILURE: unrelated track recording resolved';
+ exception when others then if SQLERRM<>'Recording identity not confirmed for request' then raise; end if; end;
  update context_requests set resource_id=track where id=request;
+ update context_resource_links set status='rejected' where resource_id=track and subject_id=recording and relation='identity';
+ begin
+  perform public.resolve_context_recording_isrc(owner,request,recording);
+  raise exception 'TEST_FAILURE: rejected recording link resolved';
+ exception when others then if SQLERRM<>'Recording identity not confirmed for request' then raise; end if; end;
+ update context_resource_links set status='accepted' where resource_id=track and subject_id=recording and relation='identity';
  update context_resource_links set status='rejected' where resource_id=profile and subject_id=artist_subject;
  target_data:=public.list_context_request_targets(owner,request);
  if target_data->2->>'identityConfirmed'<>'false' then raise exception 'Rejected identity still confirmed'; end if;
@@ -77,6 +89,7 @@ begin
  if has_function_privilege('anon','public.list_context_request_targets(uuid,uuid)','execute') then raise exception 'Browser target access granted'; end if;
  if has_function_privilege('anon','public.resolve_context_songstats_lookup(uuid,uuid,uuid,text,text)','execute')
   or has_function_privilege('authenticated','public.resolve_context_songstats_lookup(uuid,uuid,uuid,text,text)','execute')
+  or has_function_privilege('authenticated','public.resolve_context_recording_isrc(uuid,uuid,uuid)','execute')
  then raise exception 'Browser Songstats resolver access granted'; end if;
 end $$;
 rollback;
