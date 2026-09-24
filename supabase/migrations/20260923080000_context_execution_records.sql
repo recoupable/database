@@ -325,6 +325,36 @@ end $$;
 revoke all on function public.expand_context_catalog_members(uuid,uuid,uuid,text,integer) from public,anon,authenticated;
 grant execute on function public.expand_context_catalog_members(uuid,uuid,uuid,text,integer) to service_role;
 
+-- Planning sees only expanded members that are still present in the selected
+-- workspace's catalog. Historic edges remain stored but do not authorize work.
+create function public.list_context_catalog_member_targets(p_owner uuid,p_request uuid,p_subject uuid,p_after_isrc text default null,p_limit integer default 100)
+returns jsonb language plpgsql set search_path='' as $$
+declare page jsonb; catalog_key uuid; members jsonb:='[]'::jsonb; item record; count_members integer:=0; last_isrc text; has_more boolean:=false;
+begin
+ if p_limit is null or p_limit not between 1 and 100 or length(p_after_isrc)>100 then raise exception 'Invalid catalog target page'; end if;
+ -- This service-only read also verifies the request, catalog subject and owner link.
+ page:=public.list_context_catalog_members(p_owner,p_request,p_subject,null,1);
+ catalog_key:=(page->>'catalogId')::uuid;
+ for item in select m.song_isrc,m.recording_subject_id from public.context_request_catalog_members m
+  join public.catalog_songs cs on cs.catalog=m.catalog_id and cs.song=m.song_isrc
+  join public.account_catalogs ac on ac.account=p_owner and ac.catalog=m.catalog_id
+  where m.owner_id=p_owner and m.request_id=p_request and m.catalog_subject_id=p_subject
+   and m.catalog_id=catalog_key and (p_after_isrc is null or m.song_isrc>p_after_isrc)
+  order by m.song_isrc limit p_limit+1 loop
+  if count_members=p_limit then has_more:=true; exit; end if;
+  members:=members||jsonb_build_array(jsonb_build_object(
+   'subjectId',item.recording_subject_id,'kind','recording','identityConfirmed',true,
+   'availableFields',jsonb_build_array('isrc'),'reusableModules',jsonb_build_array(),
+   'isrc',item.song_isrc));
+  last_isrc:=item.song_isrc;
+  count_members:=count_members+1;
+ end loop;
+ return jsonb_build_object('catalogId',catalog_key,'catalogSubjectId',p_subject,'members',members,
+  'nextCursor',case when has_more then last_isrc else null end,'hasMore',has_more);
+end $$;
+revoke all on function public.list_context_catalog_member_targets(uuid,uuid,uuid,text,integer) from public,anon,authenticated;
+grant execute on function public.list_context_catalog_member_targets(uuid,uuid,uuid,text,integer) to service_role;
+
 -- Discover a saved request's execution IDs without exposing raw provider evidence.
 create function public.list_context_request_executions(p_owner uuid,p_request uuid)
 returns jsonb language plpgsql set search_path='' as $$

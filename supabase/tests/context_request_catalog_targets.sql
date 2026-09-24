@@ -1,7 +1,7 @@
 -- Disposable fixture only: catalog targets require a current selected-workspace link.
 begin;
 do $$
-declare owner uuid:=gen_random_uuid(); catalog_key uuid:=gen_random_uuid(); request uuid; resource uuid; subject uuid; targets jsonb; page jsonb; expansion jsonb; first_recording uuid;
+declare owner uuid:=gen_random_uuid(); catalog_key uuid:=gen_random_uuid(); request uuid; resource uuid; subject uuid; targets jsonb; page jsonb; expansion jsonb; target_page jsonb; first_recording uuid;
 begin
  insert into public.accounts(id) values(owner);
  insert into public.catalogs(id,name) values(catalog_key,'Review catalog');
@@ -50,12 +50,29 @@ begin
   or (select count(*) from public.context_request_catalog_members where request_id=request)<>104
   or jsonb_array_length((select output->'subjectIds' from public.context_requests where id=request))<>1
  then raise exception 'Large catalog expansion missed members or overflowed request subjects'; end if;
+ target_page:=public.list_context_catalog_member_targets(owner,request,subject,null,100);
+ if jsonb_array_length(target_page->'members')<>100 or target_page->>'hasMore' is distinct from 'true'
+  or target_page->'members'->0->>'subjectId' is distinct from first_recording::text
+  or target_page->'members'->0->>'identityConfirmed' is distinct from 'true'
+  or target_page->'members'->0->'availableFields' is distinct from '["isrc"]'::jsonb
+ then raise exception 'Expanded catalog planning targets are invalid'; end if;
+ target_page:=public.list_context_catalog_member_targets(owner,request,subject,target_page->>'nextCursor',100);
+ if jsonb_array_length(target_page->'members')<>4 or target_page->>'hasMore' is distinct from 'false'
+ then raise exception 'Expanded catalog planning target cursor is invalid'; end if;
+ insert into public.songs(isrc) values('DDD000000001');
+ insert into public.catalog_songs(catalog,song) values(catalog_key,'DDD000000001');
+ delete from public.catalog_songs where catalog=catalog_key and song='AAA000000002';
+ target_page:=public.list_context_catalog_member_targets(owner,request,subject,null,100);
+ if target_page->'members'->1->>'isrc' is distinct from 'AAA000000003'
+  or target_page->'members' @> '[{"isrc":"DDD000000001"}]'::jsonb
+ then raise exception 'Removed or unexpanded catalog member became a planning target'; end if;
  begin
   perform public.list_context_catalog_members(gen_random_uuid(),request,subject,null,2);
   raise exception 'TEST_FAILURE: wrong owner read catalog members';
  exception when no_data_found then null; end;
  if has_function_privilege('authenticated','public.list_context_catalog_members(uuid,uuid,uuid,text,integer)','execute') then raise exception 'Browser may read catalog members'; end if;
  if has_function_privilege('authenticated','public.expand_context_catalog_members(uuid,uuid,uuid,text,integer)','execute')
+  or has_function_privilege('authenticated','public.list_context_catalog_member_targets(uuid,uuid,uuid,text,integer)','execute')
   or has_table_privilege('authenticated','public.context_request_catalog_members','select')
  then raise exception 'Browser may expand or inspect catalog members'; end if;
  if not has_function_privilege('service_role','public.expand_context_catalog_members(uuid,uuid,uuid,text,integer)','execute')
@@ -79,6 +96,10 @@ begin
  begin
   perform public.expand_context_catalog_members(owner,request,subject,null,2);
   raise exception 'TEST_FAILURE: removed workspace link still expands catalog members';
+ exception when no_data_found then null; end;
+ begin
+  perform public.list_context_catalog_member_targets(owner,request,subject,null,2);
+  raise exception 'TEST_FAILURE: removed workspace link still exposes catalog targets';
  exception when no_data_found then null; end;
 end $$;
 rollback;
