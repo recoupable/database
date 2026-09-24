@@ -1,7 +1,7 @@
 -- Run inside a disposable database transaction and roll back the fixture rows.
 do $$
 declare owner uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid(); album text:=repeat('A',22); track text:=repeat('B',22); single_album text:=repeat('C',22);
- req jsonb; other_req jsonb; subject uuid; module jsonb; claim jsonb; saved jsonb; v_result_id uuid; response jsonb; rows integer;
+ req jsonb; other_req jsonb; subject uuid; module jsonb; claim jsonb; lookup_claim jsonb; saved jsonb; v_result_id uuid; response jsonb; rows integer;
 begin
  insert into public.accounts(id,name) values(owner,'Release slots fixture'),(outsider,'Other workspace');
  req:=public.create_context_release_request(owner,owner,album,'release-track-slots');
@@ -54,6 +54,25 @@ begin
  if saved->>'hasMore'<>'false' or saved->'slots'->0->>'slotIndex'<>'1'
  then raise exception 'Second release track page is incorrect'; end if;
  begin
+  perform public.claim_context_release_track_isrcs(outsider,(req->>'id')::uuid,subject,v_result_id,repeat('a',64));
+  raise exception 'TEST_FAILURE: wrong workspace claimed track lookup';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if;
+ end;
+ begin
+  perform public.claim_context_release_track_isrcs(owner,(other_req->>'id')::uuid,subject,v_result_id,repeat('a',64));
+  raise exception 'TEST_FAILURE: another request claimed this release evidence';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if;
+ end;
+ begin
+  perform public.claim_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,gen_random_uuid(),repeat('a',64));
+  raise exception 'TEST_FAILURE: unrelated result claimed track lookup';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if;
+ end;
+ lookup_claim:=public.claim_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,repeat('a',64));
+ if lookup_claim->>'state'<>'claimed' or lookup_claim->>'linkedSlots'<>'2' then raise exception 'Current release track lookup was not claimed'; end if;
+ lookup_claim:=public.claim_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,repeat('a',64));
+ if lookup_claim->>'state'<>'unknown' then raise exception 'Repeated provider lookup was not held for reconciliation'; end if;
+ begin
   perform public.list_context_release_track_slots(outsider,(req->>'id')::uuid,subject);
   raise exception 'TEST_FAILURE: wrong workspace read release tracks';
  exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if;
@@ -81,6 +100,11 @@ begin
  end;
  if public.list_context_release_track_slots(owner,(req->>'id')::uuid,subject)->>'state'<>'not_collected'
  then raise exception 'Withdrawn source remained readable as current'; end if;
+ begin
+  perform public.claim_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,repeat('a',64));
+  raise exception 'TEST_FAILURE: withdrawn release source permitted track lookup';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if;
+ end;
  req:=public.create_context_release_request(owner,owner,single_album,'single-track-release');
  subject:=(public.list_context_release_request_target(owner,(req->>'id')::uuid)->>'subjectId')::uuid;
  module:=module||jsonb_build_object('subjectId',subject,'fingerprint',repeat('e',64),
@@ -97,5 +121,6 @@ begin
  if saved->>'linkedSlots'<>'1' or saved->>'coverage'<>'full' then raise exception 'Single release was not linked to its one observed track'; end if;
  if pg_catalog.has_function_privilege('authenticated','public.save_context_spotify_release_track_slots(uuid,uuid,uuid,uuid)','EXECUTE')
  or pg_catalog.has_function_privilege('authenticated','public.list_context_release_track_slots(uuid,uuid,uuid,integer,integer)','EXECUTE')
+ or pg_catalog.has_function_privilege('authenticated','public.claim_context_release_track_isrcs(uuid,uuid,uuid,uuid,text)','EXECUTE')
  then raise exception 'Browser role may link release tracks'; end if;
 end $$;
