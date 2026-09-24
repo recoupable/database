@@ -6,6 +6,8 @@ begin
  insert into public.accounts(id,name) values(owner,'Release slots fixture'),(outsider,'Other workspace');
  req:=public.create_context_release_request(owner,owner,album,'release-track-slots');
  subject:=(public.list_context_release_request_target(owner,(req->>'id')::uuid)->>'subjectId')::uuid;
+ if public.list_context_release_track_slots(owner,(req->>'id')::uuid,subject)->>'state'<>'not_collected'
+ then raise exception 'Unverified album appeared to have collected tracks'; end if;
  module:=jsonb_build_object('key','spotify-release-pages-v1','topic','spotify_release_context','subjectId',subject,
   'provider','spotify','model','none','evidenceKind','observation','fingerprint',repeat('f',64),
   'sources',jsonb_build_array(jsonb_build_object('url','https://api.spotify.com/v1/albums/'||album,'kind','provider_metadata','content',jsonb_build_object('role','lookup_request'))));
@@ -37,11 +39,25 @@ begin
  exception when others then if SQLERRM like 'TEST_FAILURE:%' or SQLSTATE<>'P0002' then raise; end if;
  end;
  if exists(select 1 from public.context_release_track_slots where owner_id=owner) then raise exception 'Tracks linked before explicit source check'; end if;
+ if public.list_context_release_track_slots(owner,(req->>'id')::uuid,subject)->>'state'<>'needs_reconciliation'
+ then raise exception 'Saved evidence with missing track rows was shown as an empty release'; end if;
  saved:=public.save_context_spotify_release_track_slots(owner,(req->>'id')::uuid,subject,v_result_id);
  if saved->>'observedSlots'<>'3' or saved->>'linkedSlots'<>'2' or saved->>'skippedSlots'<>'1' or saved->>'coverage'<>'partial'
  then raise exception 'Observed and unavailable slots were confused'; end if;
  select count(*) into rows from public.context_release_track_slots where owner_id=owner and release_subject_id=subject and source_result_id=v_result_id;
  if rows<>2 then raise exception 'Observed repeated track positions were not preserved'; end if;
+ saved:=public.list_context_release_track_slots(owner,(req->>'id')::uuid,subject,-1,1);
+ if saved->>'state'<>'ready' or saved->>'hasMore'<>'true' or saved->>'nextCursor'<>'0'
+  or saved->'slots'->0->>'spotifyTrackId'<>track or saved->>'unavailableSlots'<>'1'
+ then raise exception 'First release track page is incorrect'; end if;
+ saved:=public.list_context_release_track_slots(owner,(req->>'id')::uuid,subject,0,1);
+ if saved->>'hasMore'<>'false' or saved->'slots'->0->>'slotIndex'<>'1'
+ then raise exception 'Second release track page is incorrect'; end if;
+ begin
+  perform public.list_context_release_track_slots(outsider,(req->>'id')::uuid,subject);
+  raise exception 'TEST_FAILURE: wrong workspace read release tracks';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if;
+ end;
  if exists(select 1 from public.context_subjects s join public.context_resources r on r.id=s.resource_id where r.provider='spotify' and r.resource_kind='track' and r.provider_id=track)
  then raise exception 'Spotify track slot was mistaken for a confirmed recording'; end if;
  perform public.save_context_spotify_release_track_slots(owner,(req->>'id')::uuid,subject,v_result_id);
@@ -63,6 +79,8 @@ begin
   raise exception 'TEST_FAILURE: withdrawn provider source produced memberships';
  exception when others then if SQLERRM like 'TEST_FAILURE:%' or SQLSTATE<>'P0002' then raise; end if;
  end;
+ if public.list_context_release_track_slots(owner,(req->>'id')::uuid,subject)->>'state'<>'not_collected'
+ then raise exception 'Withdrawn source remained readable as current'; end if;
  req:=public.create_context_release_request(owner,owner,single_album,'single-track-release');
  subject:=(public.list_context_release_request_target(owner,(req->>'id')::uuid)->>'subjectId')::uuid;
  module:=module||jsonb_build_object('subjectId',subject,'fingerprint',repeat('e',64),
@@ -78,5 +96,6 @@ begin
  saved:=public.save_context_spotify_release_track_slots(owner,(req->>'id')::uuid,subject,(saved->>'resultId')::uuid);
  if saved->>'linkedSlots'<>'1' or saved->>'coverage'<>'full' then raise exception 'Single release was not linked to its one observed track'; end if;
  if pg_catalog.has_function_privilege('authenticated','public.save_context_spotify_release_track_slots(uuid,uuid,uuid,uuid)','EXECUTE')
+ or pg_catalog.has_function_privilege('authenticated','public.list_context_release_track_slots(uuid,uuid,uuid,integer,integer)','EXECUTE')
  then raise exception 'Browser role may link release tracks'; end if;
 end $$;
