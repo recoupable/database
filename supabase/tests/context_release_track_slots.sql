@@ -1,7 +1,7 @@
 -- Run inside a disposable database transaction and roll back the fixture rows.
 do $$
 declare owner uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid(); album text:=repeat('A',22); track text:=repeat('B',22); single_album text:=repeat('C',22);
- req jsonb; other_req jsonb; subject uuid; module jsonb; claim jsonb; lookup_claim jsonb; saved jsonb; v_result_id uuid; response jsonb; rows integer;
+ req jsonb; other_req jsonb; subject uuid; module jsonb; claim jsonb; lookup_claim jsonb; saved jsonb; review jsonb; v_result_id uuid; response jsonb; rows integer;
  execution_id uuid:=gen_random_uuid(); wrong_execution_id uuid:=gen_random_uuid(); node_key text; execution_plan jsonb;
 begin
  insert into public.accounts(id,name) values(owner,'Release slots fixture'),(outsider,'Other workspace');
@@ -100,6 +100,15 @@ begin
  if saved->>'state'<>'saved' or saved->>'observedIsrcCount'<>'1' then raise exception 'Verified track evidence was not saved'; end if;
  if (select count(*) from public.context_result_sources where owner_id=owner and result_id=(saved->>'resultId')::uuid)<>2
  then raise exception 'Track and release source lineage were not both saved'; end if;
+ review:=public.review_context_release_track_identities(owner,(req->>'id')::uuid,subject);
+ if review->>'state'<>'ready' or jsonb_array_length(review->'candidates')<>2
+  or review->'candidates'->0->>'mappingState'<>'unmapped'
+  or review->'candidates'->1->>'mappingState'<>'unmapped'
+ then raise exception 'Source-backed release identity candidates were not reviewable'; end if;
+ begin
+  perform public.review_context_release_track_identities(outsider,(req->>'id')::uuid,subject);
+  raise exception 'TEST_FAILURE: another workspace reviewed track identities';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if; end;
  node_key:=subject::text||':spotify_release_track_isrcs';
  execution_plan:=jsonb_build_array(jsonb_build_object('key',node_key,'subjectId',subject,
   'module','spotify_release_track_isrcs','state','ready_for_dispatch','dependsOn','[]'::jsonb,
@@ -153,6 +162,8 @@ begin
  end;
  if public.list_context_release_track_slots(owner,(req->>'id')::uuid,subject)->>'state'<>'not_collected'
  then raise exception 'Withdrawn source remained readable as current'; end if;
+ if public.review_context_release_track_identities(owner,(req->>'id')::uuid,subject)->>'state'<>'not_collected'
+ then raise exception 'Withdrawn source remained an identity candidate'; end if;
  begin
   perform public.claim_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,repeat('a',64));
   raise exception 'TEST_FAILURE: withdrawn release source permitted track lookup';
@@ -176,5 +187,6 @@ begin
  or pg_catalog.has_function_privilege('authenticated','public.list_context_release_track_slots(uuid,uuid,uuid,integer,integer)','EXECUTE')
   or pg_catalog.has_function_privilege('authenticated','public.claim_context_release_track_isrcs(uuid,uuid,uuid,uuid,text)','EXECUTE')
  or pg_catalog.has_function_privilege('authenticated','public.complete_context_release_track_isrcs(uuid,uuid,uuid,uuid,uuid,jsonb)','EXECUTE')
+ or pg_catalog.has_function_privilege('authenticated','public.review_context_release_track_identities(uuid,uuid,uuid)','EXECUTE')
  then raise exception 'Browser role may link release tracks'; end if;
 end $$;
