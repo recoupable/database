@@ -277,6 +277,54 @@ end $$;
 revoke all on function public.list_context_catalog_members(uuid,uuid,uuid,text,integer) from public,anon,authenticated;
 grant execute on function public.list_context_catalog_members(uuid,uuid,uuid,text,integer) to service_role;
 
+-- A catalog request may contain thousands of recordings. Keep the member
+-- expansion outside context_requests.output.subjectIds (which is capped at 100).
+-- Membership is evidence of inclusion only, never artist roster or rights.
+alter table public.context_subjects add constraint context_subjects_id_catalog_id_key unique(id,catalog_id);
+alter table public.context_subjects add constraint context_subjects_id_song_isrc_key unique(id,song_isrc);
+create table public.context_request_catalog_members (
+ request_id uuid not null,
+ owner_id uuid not null,
+ catalog_subject_id uuid not null,
+ recording_subject_id uuid not null,
+ catalog_id uuid not null references public.catalogs(id) on delete restrict,
+ song_isrc text not null references public.songs(isrc) on delete restrict,
+ observed_at timestamptz not null default now(),
+ primary key(request_id,catalog_subject_id,song_isrc),
+ foreign key(request_id,owner_id) references public.context_requests(id,owner_id) on delete restrict,
+ foreign key(catalog_subject_id,catalog_id) references public.context_subjects(id,catalog_id) on delete restrict,
+ foreign key(recording_subject_id,song_isrc) references public.context_subjects(id,song_isrc) on delete restrict
+);
+create index context_request_catalog_members_recording_idx on public.context_request_catalog_members(recording_subject_id);
+alter table public.context_request_catalog_members enable row level security;
+revoke all on public.context_request_catalog_members from public,anon,authenticated;
+grant select,insert on public.context_request_catalog_members to service_role;
+
+create function public.expand_context_catalog_members(p_owner uuid,p_request uuid,p_subject uuid,p_after_isrc text default null,p_limit integer default 100)
+returns jsonb language plpgsql set search_path='' as $$
+declare page jsonb; catalog_key uuid; isrc_value text; recording_key uuid; expanded jsonb:='[]'::jsonb;
+begin
+ page:=public.list_context_catalog_members(p_owner,p_request,p_subject,p_after_isrc,p_limit);
+ catalog_key:=(page->>'catalogId')::uuid;
+ for isrc_value in select value from jsonb_array_elements_text(page->'members') loop
+  -- Recheck current access and membership before persisting each edge.
+  if not exists(select 1 from public.account_catalogs where account=p_owner and catalog=catalog_key)
+   or not exists(select 1 from public.catalog_songs where catalog=catalog_key and song=isrc_value)
+  then raise exception 'Catalog membership changed during expansion'; end if;
+  insert into public.context_subjects(kind,song_isrc) values('recording',isrc_value)
+  on conflict(song_isrc) do nothing;
+  select id into strict recording_key from public.context_subjects where kind='recording' and song_isrc=isrc_value;
+  insert into public.context_request_catalog_members(request_id,owner_id,catalog_subject_id,recording_subject_id,catalog_id,song_isrc)
+  values(p_request,p_owner,p_subject,recording_key,catalog_key,isrc_value)
+  on conflict(request_id,catalog_subject_id,song_isrc) do nothing;
+  expanded:=expanded||jsonb_build_array(jsonb_build_object('subjectId',recording_key,'isrc',isrc_value));
+ end loop;
+ return jsonb_build_object('catalogId',catalog_key,'catalogSubjectId',p_subject,'members',expanded,
+  'nextCursor',page->'nextCursor','hasMore',page->'hasMore');
+end $$;
+revoke all on function public.expand_context_catalog_members(uuid,uuid,uuid,text,integer) from public,anon,authenticated;
+grant execute on function public.expand_context_catalog_members(uuid,uuid,uuid,text,integer) to service_role;
+
 -- Discover a saved request's execution IDs without exposing raw provider evidence.
 create function public.list_context_request_executions(p_owner uuid,p_request uuid)
 returns jsonb language plpgsql set search_path='' as $$
