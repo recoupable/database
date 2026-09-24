@@ -1,7 +1,7 @@
 -- Disposable fixture only: catalog targets require a current selected-workspace link.
 begin;
 do $$
-declare owner uuid:=gen_random_uuid(); catalog_key uuid:=gen_random_uuid(); request uuid; resource uuid; subject uuid; targets jsonb; page jsonb; expansion jsonb; target_page jsonb; first_recording uuid;
+declare owner uuid:=gen_random_uuid(); catalog_key uuid:=gen_random_uuid(); request uuid; resource uuid; subject uuid; targets jsonb; page jsonb; expansion jsonb; target_page jsonb; first_recording uuid; second_recording uuid;
 begin
  insert into public.accounts(id) values(owner);
  insert into public.catalogs(id,name) values(catalog_key,'Review catalog');
@@ -29,6 +29,9 @@ begin
  if jsonb_array_length(expansion->'members')<>2 or expansion->>'nextCursor' is distinct from 'AAA000000002'
  then raise exception 'First catalog expansion page is incorrect'; end if;
  first_recording:=(expansion->'members'->0->>'subjectId')::uuid;
+ second_recording:=(expansion->'members'->1->>'subjectId')::uuid;
+ if public.resolve_context_catalog_member_recording(owner,request,first_recording)->>'isrc' is distinct from 'AAA000000001'
+ then raise exception 'Current catalog recording did not resolve'; end if;
  if not exists(select 1 from public.context_subjects where id=first_recording and kind='recording' and song_isrc='AAA000000001')
   or not exists(select 1 from public.context_request_catalog_members where request_id=request and catalog_subject_id=subject and recording_subject_id=first_recording and song_isrc='AAA000000001')
  then raise exception 'Expanded recording identity or request edge missing'; end if;
@@ -67,12 +70,17 @@ begin
   or target_page->'members' @> '[{"isrc":"DDD000000001"}]'::jsonb
  then raise exception 'Removed or unexpanded catalog member became a planning target'; end if;
  begin
+  perform public.resolve_context_catalog_member_recording(owner,request,second_recording);
+  raise exception 'TEST_FAILURE: removed catalog member still resolved';
+ exception when no_data_found then null; end;
+ begin
   perform public.list_context_catalog_members(gen_random_uuid(),request,subject,null,2);
   raise exception 'TEST_FAILURE: wrong owner read catalog members';
  exception when no_data_found then null; end;
  if has_function_privilege('authenticated','public.list_context_catalog_members(uuid,uuid,uuid,text,integer)','execute') then raise exception 'Browser may read catalog members'; end if;
  if has_function_privilege('authenticated','public.expand_context_catalog_members(uuid,uuid,uuid,text,integer)','execute')
   or has_function_privilege('authenticated','public.list_context_catalog_member_targets(uuid,uuid,uuid,text,integer)','execute')
+  or has_function_privilege('authenticated','public.resolve_context_catalog_member_recording(uuid,uuid,uuid)','execute')
   or has_table_privilege('authenticated','public.context_request_catalog_members','select')
  then raise exception 'Browser may expand or inspect catalog members'; end if;
  if not has_function_privilege('service_role','public.expand_context_catalog_members(uuid,uuid,uuid,text,integer)','execute')
@@ -100,6 +108,10 @@ begin
  begin
   perform public.list_context_catalog_member_targets(owner,request,subject,null,2);
   raise exception 'TEST_FAILURE: removed workspace link still exposes catalog targets';
+ exception when no_data_found then null; end;
+ begin
+  perform public.resolve_context_catalog_member_recording(owner,request,first_recording);
+  raise exception 'TEST_FAILURE: removed workspace link still resolves recording';
  exception when no_data_found then null; end;
 end $$;
 rollback;

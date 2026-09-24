@@ -355,6 +355,29 @@ end $$;
 revoke all on function public.list_context_catalog_member_targets(uuid,uuid,uuid,text,integer) from public,anon,authenticated;
 grant execute on function public.list_context_catalog_member_targets(uuid,uuid,uuid,text,integer) to service_role;
 
+-- Resolve one expanded recording from its still-current catalog membership.
+-- This read does not admit the member to claim_context_enrichment or permit a call.
+create function public.resolve_context_catalog_member_recording(p_owner uuid,p_request uuid,p_recording uuid)
+returns jsonb language plpgsql set search_path='' as $$
+declare value text;
+begin
+ select m.song_isrc into strict value from public.context_request_catalog_members m
+ join public.context_requests req on req.id=m.request_id and req.owner_id=p_owner
+  and req.status in ('partial','completed') and req.output->'subjectIds' ? m.catalog_subject_id::text
+ join public.context_resources resource on resource.id=req.resource_id and resource.provider='recoup'
+  and resource.resource_kind='catalog' and resource.provider_id=m.catalog_id::text
+ join public.context_subjects catalog_subject on catalog_subject.id=m.catalog_subject_id
+  and catalog_subject.kind='catalog' and catalog_subject.catalog_id=m.catalog_id
+ join public.context_subjects recording_subject on recording_subject.id=m.recording_subject_id
+  and recording_subject.kind='recording' and recording_subject.song_isrc=m.song_isrc
+ join public.account_catalogs access on access.account=p_owner and access.catalog=m.catalog_id
+ join public.catalog_songs member on member.catalog=m.catalog_id and member.song=m.song_isrc
+ where m.owner_id=p_owner and m.request_id=p_request and m.recording_subject_id=p_recording;
+ return jsonb_build_object('isrc',value,'subjectId',p_recording);
+end $$;
+revoke all on function public.resolve_context_catalog_member_recording(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.resolve_context_catalog_member_recording(uuid,uuid,uuid) to service_role;
+
 -- Discover a saved request's execution IDs without exposing raw provider evidence.
 create function public.list_context_request_executions(p_owner uuid,p_request uuid)
 returns jsonb language plpgsql set search_path='' as $$
