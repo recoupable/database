@@ -1,7 +1,7 @@
 -- Run inside a transaction against the local Context Engine fixture database.
 -- The enclosing test runner must ROLLBACK. No provider calls or customer data required.
 do $$
-declare req public.context_requests; module jsonb; claim jsonb; saved jsonb; kind text; snapshot jsonb; topic text; evidence text;
+declare req public.context_requests; module jsonb; claim jsonb; saved jsonb; kind text; snapshot jsonb; topic text; evidence text; other_resource uuid; other_subject uuid;
 begin
  select * into strict req from public.context_requests where status in ('partial','completed') and jsonb_array_length(output->'subjectIds')>0 limit 1;
  for topic,evidence in select * from (values ('musicbrainz_recordings','observation'),('mlc_recordings','observation'),('mlc_works','observation'),('mlc_work_candidates','observation'),('chartmetric_candidates','observation'),('songstats_context','observation'),('spotify_release_context','observation'),('social_context','observation'),('catalog_valuation','estimate'),('lyrics','interpretation')) t(topic,evidence) loop
@@ -16,6 +16,23 @@ begin
   if kind<>evidence then raise exception 'Wrong evidence kind: % expected %',kind,evidence; end if;
   if public.claim_context_enrichment(req.owner_id,req.id,module)->>'state'<>'reused' then raise exception 'Expected reuse'; end if;
  end loop;
+ -- Reusing a valid cache key for a different topic must not return its evidence.
+ begin
+  perform public.claim_context_enrichment(req.owner_id,req.id,module||jsonb_build_object('topic','song_summary'));
+  raise exception 'TEST_FAILURE: fingerprint reused across topics';
+ exception when others then
+  if SQLERRM like 'TEST_FAILURE:%' or SQLERRM <> 'Enrichment fingerprint subject or topic conflict' then raise; end if;
+ end;
+ insert into public.context_resources(provider,resource_kind,provider_id,canonical_url)
+ values('spotify','release',gen_random_uuid()::text,'https://example.com/other-fixture') returning id into other_resource;
+ insert into public.context_subjects(kind,resource_id) values('release',other_resource) returning id into other_subject;
+ update public.context_requests set output=jsonb_set(output,'{subjectIds}',(output->'subjectIds')||jsonb_build_array(other_subject)) where id=req.id;
+ begin
+  perform public.claim_context_enrichment(req.owner_id,req.id,module||jsonb_build_object('subjectId',other_subject));
+  raise exception 'TEST_FAILURE: fingerprint reused across subjects';
+ exception when others then
+  if SQLERRM like 'TEST_FAILURE:%' or SQLERRM <> 'Enrichment fingerprint subject or topic conflict' then raise; end if;
+ end;
  module:=module||jsonb_build_object('topic','mlc_works','evidenceKind','interpretation','fingerprint',repeat('b',64));
  begin
   perform public.claim_context_enrichment(req.owner_id,req.id,module);
