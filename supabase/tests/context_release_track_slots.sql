@@ -2,6 +2,7 @@
 do $$
 declare owner uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid(); album text:=repeat('A',22); track text:=repeat('B',22); single_album text:=repeat('C',22);
  req jsonb; other_req jsonb; subject uuid; module jsonb; claim jsonb; lookup_claim jsonb; saved jsonb; v_result_id uuid; response jsonb; rows integer;
+ execution_id uuid:=gen_random_uuid(); wrong_execution_id uuid:=gen_random_uuid(); node_key text; execution_plan jsonb;
 begin
  insert into public.accounts(id,name) values(owner,'Release slots fixture'),(outsider,'Other workspace');
  req:=public.create_context_release_request(owner,owner,album,'release-track-slots');
@@ -99,6 +100,21 @@ begin
  if saved->>'state'<>'saved' or saved->>'observedIsrcCount'<>'1' then raise exception 'Verified track evidence was not saved'; end if;
  if (select count(*) from public.context_result_sources where owner_id=owner and result_id=(saved->>'resultId')::uuid)<>2
  then raise exception 'Track and release source lineage were not both saved'; end if;
+ node_key:=subject::text||':spotify_release_track_isrcs';
+ execution_plan:=jsonb_build_array(jsonb_build_object('key',node_key,'subjectId',subject,
+  'module','spotify_release_track_isrcs','state','ready_for_dispatch','dependsOn','[]'::jsonb,
+  'sourceResultId',v_result_id));
+ perform public.create_context_execution(owner,(req->>'id')::uuid,execution_id,'spotify-release-track-isrcs-v1',execution_plan);
+ perform public.save_context_execution_outcome(owner,execution_id,node_key,
+  jsonb_build_object('key',node_key,'status','saved','receipt',jsonb_build_object('state','saved','resultId',saved->>'resultId')));
+ if (public.read_context_execution(owner,execution_id)->'outcomes'->0->'outcome'->>'status') is distinct from 'saved'
+ then raise exception 'Verified track observation did not appear in recorded execution'; end if;
+ perform public.create_context_execution(owner,(req->>'id')::uuid,wrong_execution_id,'spotify-release-track-isrcs-v1',execution_plan);
+ begin
+  perform public.save_context_execution_outcome(owner,wrong_execution_id,node_key,
+   jsonb_build_object('key',node_key,'status','saved','receipt',jsonb_build_object('state','saved','resultId',v_result_id)));
+  raise exception 'TEST_FAILURE: album result accepted as track lookup outcome';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if; end;
  if (public.complete_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,
   (lookup_claim->>'attemptId')::uuid,response))->>'resultId' is distinct from saved->>'resultId'
  then raise exception 'Completion replay created another result'; end if;
