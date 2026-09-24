@@ -72,6 +72,38 @@ begin
  if lookup_claim->>'state'<>'claimed' or lookup_claim->>'linkedSlots'<>'2' then raise exception 'Current release track lookup was not claimed'; end if;
  lookup_claim:=public.claim_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,repeat('a',64));
  if lookup_claim->>'state'<>'unknown' then raise exception 'Repeated provider lookup was not held for reconciliation'; end if;
+ response:=jsonb_build_object('slots',jsonb_build_array(
+   jsonb_build_object('slotIndex',0,'spotifyTrackId',track,'state','observed','isrc','USAAA1234567'),
+   jsonb_build_object('slotIndex',1,'spotifyTrackId',track,'state','observed','isrc','USAAA1234567')),
+  'observations',jsonb_build_array(jsonb_build_object('spotifyTrackId',track,'state','observed',
+   'isrc','USAAA1234567','sourceUrl','https://api.spotify.com/v1/tracks/'||track,
+   'retrievedAt','2026-09-24T12:00:00Z','elapsedMs',10,'httpStatus',200,'gap',null,
+   'raw',jsonb_build_object('id',track,'external_ids',jsonb_build_object('isrc','USAAA1234567')))));
+ begin
+  perform public.complete_context_release_track_isrcs(outsider,(req->>'id')::uuid,subject,v_result_id,
+   (lookup_claim->>'attemptId')::uuid,response);
+  raise exception 'TEST_FAILURE: other workspace completed track lookup';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if; end;
+ begin
+  perform public.complete_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,
+   (lookup_claim->>'attemptId')::uuid,jsonb_set(response,'{observations,0,spotifyTrackId}',to_jsonb(repeat('Z',22))));
+  raise exception 'TEST_FAILURE: substituted track identity completed';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if; end;
+ begin
+  perform public.complete_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,
+   (lookup_claim->>'attemptId')::uuid,jsonb_set(response,'{observations,0,isrc}','"USBBB1234567"'::jsonb));
+  raise exception 'TEST_FAILURE: invented ISRC completed';
+ exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if; end;
+ saved:=public.complete_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,
+  (lookup_claim->>'attemptId')::uuid,response);
+ if saved->>'state'<>'saved' or saved->>'observedIsrcCount'<>'1' then raise exception 'Verified track evidence was not saved'; end if;
+ if (select count(*) from public.context_result_sources where owner_id=owner and result_id=(saved->>'resultId')::uuid)<>2
+ then raise exception 'Track and release source lineage were not both saved'; end if;
+ if (public.complete_context_release_track_isrcs(owner,(req->>'id')::uuid,subject,v_result_id,
+  (lookup_claim->>'attemptId')::uuid,response))->>'resultId' is distinct from saved->>'resultId'
+ then raise exception 'Completion replay created another result'; end if;
+ if exists(select 1 from public.context_subjects s join public.context_resources r on r.id=s.resource_id where r.provider='spotify' and r.resource_kind='track' and r.provider_id=track)
+ then raise exception 'Observed track ISRC created a recording identity'; end if;
  begin
   perform public.list_context_release_track_slots(outsider,(req->>'id')::uuid,subject);
   raise exception 'TEST_FAILURE: wrong workspace read release tracks';
@@ -93,6 +125,11 @@ begin
  update public.context_sources set withdrawn_at=now() where id in (
   select v.source_id from public.context_result_sources rs
   join public.context_source_versions v on v.id=rs.source_version_id where rs.result_id=v_result_id);
+ if not exists(select 1 from public.context_result_sources rs
+  join public.context_source_versions v on v.id=rs.source_version_id
+  join public.context_sources s on s.id=v.source_id
+  where rs.result_id=(saved->>'resultId')::uuid and s.withdrawn_at is not null)
+ then raise exception 'Album source withdrawal did not invalidate track evidence lineage'; end if;
  begin
   perform public.save_context_spotify_release_track_slots(owner,(req->>'id')::uuid,subject,v_result_id);
   raise exception 'TEST_FAILURE: withdrawn provider source produced memberships';
@@ -121,6 +158,7 @@ begin
  if saved->>'linkedSlots'<>'1' or saved->>'coverage'<>'full' then raise exception 'Single release was not linked to its one observed track'; end if;
  if pg_catalog.has_function_privilege('authenticated','public.save_context_spotify_release_track_slots(uuid,uuid,uuid,uuid)','EXECUTE')
  or pg_catalog.has_function_privilege('authenticated','public.list_context_release_track_slots(uuid,uuid,uuid,integer,integer)','EXECUTE')
- or pg_catalog.has_function_privilege('authenticated','public.claim_context_release_track_isrcs(uuid,uuid,uuid,uuid,text)','EXECUTE')
+  or pg_catalog.has_function_privilege('authenticated','public.claim_context_release_track_isrcs(uuid,uuid,uuid,uuid,text)','EXECUTE')
+ or pg_catalog.has_function_privilege('authenticated','public.complete_context_release_track_isrcs(uuid,uuid,uuid,uuid,uuid,jsonb)','EXECUTE')
  then raise exception 'Browser role may link release tracks'; end if;
 end $$;
