@@ -19,3 +19,8 @@ The opt-in API `lib/context/__tests__/pipeline.live.test.ts` uses the same store
 Run `context_execution_records.sql` after the provider-evidence and execution-record migrations in a disposable database. It verifies immutable plan replay, conflicting replay, duplicate keys, subject scope, owner isolation, idempotent outcomes, unknown nodes, invented success receipts, a real claim/save receipt, cancellation and browser privilege restrictions. Fixtures roll back.
 
 These records store a server-built plan and policy version, not a spending authorization. The server must validate graph cycles and its policy, recheck workspace access, and reserve/settle paid work separately. Outcome writes remain available after cancellation so in-flight work can leave an accurate trace. Evidence writes retain their separate request guards. Success receipts currently support only the three audited dispatcher modules. Durable orchestration and inspector loading are subsequent integration work.
+## Enrichment completion scope
+
+After the enrichment migrations through `20260923070000_context_enrichment_scope.sql`, run `context_completion_scope.sql` in a disposable local database. It rolls back its fixtures and checks cancellation after claim, removed/missing/malformed subject membership, wrong owner, valid completion, duplicate completion, and cancellation before an idempotent response. Rejected completions must leave no documents, results or sources.
+
+Both claim and completion acquire a shared request row lock before examining scope. This permits concurrent collectors while preventing status/output updates until their transaction finishes. API actor/workspace authorization remains required; this migration does not enable workflow dispatch.
