@@ -1,5 +1,17 @@
 # Context foundation tests
 
+## Brief snapshots
+
+After `20260926170000_context_brief_snapshots.sql`, run `context_brief_snapshots.sql`
+in a disposable database. It rolls back its fixture and covers exact save/read,
+idempotent replay, key conflicts, changed/forged evidence, manifest mismatch,
+workspace isolation, superseded context, cancellation, source withdrawal and
+service/browser privileges. It needs only the Context foundation and Spotify
+pipeline migrations plus the existing accounts/songs/storage tables and roles.
+No providers are called.
+
+## Foundation
+
 Run `context_foundation.sql` after `20260920010000_context_foundation.sql` in a **disposable** PostgreSQL/Supabase database with the existing `accounts`, `songs`, storage schema and Supabase roles. The fixture transaction rolls back.
 
 The assertions cover provider-ID case, per-owner request uniqueness, cross-owner source references, required provenance, acceptance ownership, stale result rejection, creative-proposal exclusion, withdrawal and browser permissions. They do not invoke external providers or charge credits.
