@@ -1,0 +1,23 @@
+name: OAuth provider storage
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+      - name: Test isolated OAuth store
+        run: PG_BINDIR="$(pg_config --bindir)" tests/oauth/run.sh
