@@ -144,6 +144,27 @@ class OAuthStoreTest(unittest.TestCase):
         self.sql(f"SELECT public.oauth_store_destroy('test-issuer', 'AuthorizationCode', '{'a' * 64}')")
         self.assertIsNone(self.find())
 
+    def test_connection_index_is_owner_scoped_immutable_and_revocation_aware(self):
+        owner = 'e' * 64
+        other = 'f' * 64
+        grant = 'b' * 64
+        self.sql(f"SELECT public.oauth_store_upsert('test-issuer', 'RecoupGrant', '{grant}', 'encrypted', 300, '{grant}', NULL, NULL, '{owner}')")
+        def listing(account=owner, issuer='test-issuer'):
+            return json.loads(self.sql(f"SELECT public.oauth_store_list_connections('{issuer}', '{account}')"))
+        self.assertEqual(len(listing()), 1)
+        self.assertEqual(listing(other), [])
+        self.assertEqual(listing(issuer='other-issuer'), [])
+        changed = self.sql(f"SELECT public.oauth_store_upsert('test-issuer', 'RecoupGrant', '{grant}', 'changed', 300, '{grant}', NULL, NULL, '{other}')", check=False)
+        self.assertNotEqual(changed.returncode, 0)
+        self.assertEqual(listing()[0]['payload'], 'encrypted')
+        self.sql(f"SELECT public.oauth_store_revoke_grant('test-issuer', '{grant}')")
+        self.assertEqual(listing(), [])
+
+    def test_connection_index_omits_expired_grants(self):
+        self.sql(f"SELECT public.oauth_store_upsert('test-issuer', 'RecoupGrant', '{'b' * 64}', 'encrypted', 300, '{'b' * 64}', NULL, NULL, '{'e' * 64}')")
+        self.sql("UPDATE public.oauth_provider_artifacts SET expires_at = now() - interval '1 second'")
+        self.assertEqual(json.loads(self.sql(f"SELECT public.oauth_store_list_connections('test-issuer', '{'e' * 64}')")), [])
+
     def test_service_role_can_use_functions(self):
         self.assertEqual(self.sql(f"SET ROLE service_role; SELECT public.oauth_store_consume('test-issuer','AuthorizationCode','{'a' * 64}')").splitlines()[-1], 'f')
 
