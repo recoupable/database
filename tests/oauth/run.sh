@@ -27,5 +27,6 @@ if [[ -f "$identity_migration" ]]; then
   "$pg_bin/psql" "${psql_args[@]}" -f "$identity_migration" >/dev/null
 fi
 "$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261006150000_oauth_connected_apps.sql" >/dev/null
+"$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261006170000_oauth_grant_binding_integrity.sql" >/dev/null
 python3 "$repo_root/tests/oauth/test_store.py"
 python3 "$repo_root/tests/oauth/test_identity.py"

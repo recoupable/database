@@ -165,6 +165,11 @@ class OAuthStoreTest(unittest.TestCase):
         self.sql("UPDATE public.oauth_provider_artifacts SET expires_at = now() - interval '1 second'")
         self.assertEqual(json.loads(self.sql(f"SELECT public.oauth_store_list_connections('test-issuer', '{'e' * 64}')")), [])
 
+    def test_connection_grants_require_both_immutable_bindings(self):
+        for grant, owner in [("NULL", "NULL"), ("NULL", "'" + 'e' * 64 + "'"), ("'" + 'b' * 64 + "'", "NULL"), ("'" + 'c' * 64 + "'", "'" + 'e' * 64 + "'")]:
+            result = self.sql(f"SELECT public.oauth_store_upsert('test-issuer', 'RecoupGrant', '{'b' * 64}', 'encrypted', 300, {grant}, NULL, NULL, {owner})", check=False)
+            self.assertNotEqual(result.returncode, 0)
+
     def test_service_role_can_use_functions(self):
         self.assertEqual(self.sql(f"SET ROLE service_role; SELECT public.oauth_store_consume('test-issuer','AuthorizationCode','{'a' * 64}')").splitlines()[-1], 'f')
 
