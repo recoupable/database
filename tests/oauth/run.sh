@@ -30,3 +30,6 @@ fi
 "$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261006170000_oauth_grant_binding_integrity.sql" >/dev/null
 python3 "$repo_root/tests/oauth/test_store.py"
 python3 "$repo_root/tests/oauth/test_identity.py"
+
+"$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261006190000_oauth_rate_limits.sql" >/dev/null
+python3 "$repo_root/tests/oauth/test_rate_limits.py"
