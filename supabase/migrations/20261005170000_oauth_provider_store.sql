@@ -42,7 +42,8 @@ CREATE FUNCTION public.oauth_store_upsert(
 DECLARE
   bound_grant text := CASE WHEN p_model = 'Grant' THEN p_id_hash ELSE p_grant_hash END;
 BEGIN
-  IF p_expires_in IS NOT NULL AND (p_expires_in < 1 OR p_expires_in > 2678400) THEN
+  IF (p_expires_in IS NULL AND p_model <> 'Client')
+    OR (p_expires_in IS NOT NULL AND (p_expires_in < 1 OR p_expires_in > 2678400)) THEN
     RAISE EXCEPTION 'Invalid OAuth artifact lifetime' USING ERRCODE = '22023';
   END IF;
   IF bound_grant IS NOT NULL THEN
@@ -74,10 +75,10 @@ CREATE FUNCTION public.oauth_store_find(p_namespace text, p_model text, p_index 
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
 DECLARE result jsonb;
 BEGIN
-  IF p_index NOT IN ('id', 'uid', 'user_code') THEN
+  IF p_index IS NULL OR p_index NOT IN ('id', 'uid', 'user_code') THEN
     RAISE EXCEPTION 'Invalid OAuth artifact index' USING ERRCODE = '22023';
   END IF;
-  SELECT jsonb_build_object('payload', artifact.payload, 'consumed', floor(extract(epoch FROM artifact.consumed_at)))
+  SELECT jsonb_build_object('id_hash', artifact.id_hash, 'payload', artifact.payload, 'consumed', floor(extract(epoch FROM artifact.consumed_at)))
   INTO result FROM public.oauth_provider_artifacts AS artifact
   WHERE artifact.namespace = p_namespace AND artifact.model = p_model
     AND CASE p_index WHEN 'id' THEN artifact.id_hash = p_hash WHEN 'uid' THEN artifact.uid_hash = p_hash ELSE artifact.user_code_hash = p_hash END

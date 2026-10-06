@@ -3,6 +3,7 @@ set -euo pipefail
 # Always creates its own cluster. Does not read DATABASE_URL or connect to a shared database.
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 pg_bin="${PG_BINDIR:-$(dirname "$(command -v initdb)")}"
+"$pg_bin/pg_ctl" --version
 cluster_root="$(mktemp -d /tmp/recoup-oauth-pg.XXXXXX)"
 cleanup() {
   "$pg_bin/pg_ctl" -D "$cluster_root/data" -m immediate stop >/dev/null 2>&1 || true

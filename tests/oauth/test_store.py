@@ -31,6 +31,7 @@ class OAuthStoreTest(unittest.TestCase):
         self.put()
         self.assertEqual(self.find()['payload'], 'v1:encrypted-fixture')
         self.assertIsNone(self.find()['consumed'])
+        self.assertEqual(self.find()['id_hash'], 'a' * 64)
 
     def test_simultaneous_consumption_has_exactly_one_winner(self):
         self.put()
@@ -115,6 +116,24 @@ class OAuthStoreTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
         result = self.sql("SELECT public.oauth_store_upsert('test-issuer', 'Client', 'raw-secret', 'encrypted', NULL, NULL, NULL, NULL)", check=False)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_only_client_can_omit_expiry(self):
+        for model in ['AuthorizationCode', 'AccessToken', 'RefreshToken', 'Grant', 'Session']:
+            result = self.sql(f"SELECT public.oauth_store_upsert('test-issuer', '{model}', '{'a' * 64}', 'encrypted', NULL, NULL, NULL, NULL)", check=False)
+            self.assertNotEqual(result.returncode, 0)
+        self.put(model='Client', ttl='NULL')
+
+    def test_null_lookup_index_is_rejected(self):
+        result = self.sql(f"SELECT public.oauth_store_find('test-issuer', 'Session', NULL, '{'a' * 64}')", check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_all_rpc_execute_privileges_are_server_only(self):
+        for role in ['anon', 'authenticated', 'service_role']:
+            result = self.sql(f"SELECT bool_and(has_function_privilege('{role}', oid, 'EXECUTE')) FROM pg_proc WHERE proname LIKE 'oauth_store_%'")
+            if role == 'service_role':
+                self.assertEqual(result, 't')
+            else:
+                self.assertEqual(self.sql(f"SELECT bool_or(has_function_privilege('{role}', oid, 'EXECUTE')) FROM pg_proc WHERE proname LIKE 'oauth_store_%'"), 'f')
 
     def test_delete_is_scoped_to_namespace_and_model(self):
         self.put()
