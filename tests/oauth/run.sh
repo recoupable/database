@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 # Always creates its own cluster. Does not read DATABASE_URL or connect to a shared database.
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 pg_bin="${PG_BINDIR:-$(dirname "$(command -v initdb)")}"
@@ -21,4 +22,9 @@ migration="$repo_root/supabase/migrations/20261005170000_oauth_provider_store.sq
 if [[ -f "$migration" ]]; then
   "$pg_bin/psql" "${psql_args[@]}" -f "$migration" >/dev/null
 fi
+identity_migration="$repo_root/supabase/migrations/20261006130000_oauth_account_identities.sql"
+if [[ -f "$identity_migration" ]]; then
+  "$pg_bin/psql" "${psql_args[@]}" -f "$identity_migration" >/dev/null
+fi
 python3 "$repo_root/tests/oauth/test_store.py"
+python3 "$repo_root/tests/oauth/test_identity.py"

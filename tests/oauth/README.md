@@ -29,3 +29,11 @@ Do not delete revocation markers until all potential associated artifacts and in
 Rollback: first disable OAuth issuance/callers. Do not drop tables holding active grants while clients still depend on them. Since this additive migration has no production callers yet, pre-launch rollback may drop the five functions and two new tables after confirming no OAuth deployment has been enabled. Never reset unrelated Supabase data.
 
 Local validation uses PostgreSQL 17. CI uses the Ubuntu runner package version and prints that version; it does not claim to pin PostgreSQL 17. Secondary uid/user_code indexes are unique within namespace/model. Collisions fail closed; callers must not remap an existing provider identity to another record.
+
+## Existing-account identity bindings
+
+The runner also applies `20261006130000_oauth_account_identities.sql` to minimal test-only accounts/email tables and runs eight identity tests. The full production account schema remains a separate Supabase preview/deployment gate.
+
+`resolve_oauth_account` is service-role-only. Its email array must come from server-verified Privy identity evidence; never pass browser-provided email/account claims. It binds one immutable `(provider_app_id, provider_subject)` to exactly one existing account. Zero or multiple account matches fail without provisioning. Later email changes never remap an existing subject. Concurrent initial links serialize. Deleting an account sets the binding to null and preserves the subject as a tombstone; later login fails instead of silently relinking. Anonymous/authenticated callers have neither table nor RPC access.
+
+No production login endpoint uses this mapping yet. Existing app onboarding is unchanged. Apply both OAuth migrations before enabling their API callers. Do not purge identity tombstones automatically; account relinking requires an explicitly designed recovery flow.
