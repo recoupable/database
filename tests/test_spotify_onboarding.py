@@ -7,6 +7,7 @@ import json
 import pathlib
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -48,6 +49,7 @@ class SpotifyOnboarding(unittest.TestCase):
         cls.sql((ROOT / 'supabase/migrations/20260805190000_preserve_youtube_channel_url_case.sql').read_text())
         cls.sql(MIGRATION.read_text())
         cls.sql((ROOT / 'supabase/migrations/20261008030000_onboarding_membership_lock_privilege.sql').read_text())
+        cls.sql((ROOT / 'supabase/migrations/20261008040000_recheck_spotify_social_owner.sql').read_text())
 
     @classmethod
     def stop(cls):
@@ -96,6 +98,27 @@ class SpotifyOnboarding(unittest.TestCase):
         self.assertEqual(len({r.split('|')[0] for r in results}), 1)
         self.assertEqual(sum(r.endswith('|t') for r in results), 1)
         self.assertEqual(self.sql('SELECT count(*) FROM artist_organization_ids'), '1')
+
+    def test_legacy_writer_race_rolls_back_then_resolves_existing_owner(self):
+        self.sql(f"INSERT INTO accounts VALUES ('{ARTIST}','Legacy artist')")
+        sql = f"""BEGIN; SET application_name = 'onboarding_legacy_race';
+          INSERT INTO socials(username,profile_url) VALUES ('{SPOTIFY}','https://open.spotify.com/artist/{SPOTIFY}');
+          INSERT INTO account_socials SELECT '{ARTIST}',id FROM socials;
+          SELECT pg_sleep(2); COMMIT;"""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            writer = pool.submit(self.sql, sql)
+            deadline = time.monotonic() + 5
+            while self.sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='onboarding_legacy_race' AND wait_event='PgSleep'") != '1':
+                if time.monotonic() > deadline:
+                    self.fail('Legacy writer never reached concurrent insert window')
+                time.sleep(0.02)
+            self.assertIn('identity changed', self.call(fails=True))
+            writer.result()
+        self.assertEqual(self.sql('SELECT count(*) FROM accounts'), '3')
+        self.assertEqual(self.sql('SELECT count(*) FROM account_info'), '0')
+        self.assertEqual(self.sql('SELECT count(*) FROM account_socials'), '1')
+        self.assertEqual(self.sql('SELECT count(*) FROM artist_organization_ids'), '0')
+        self.assertEqual(self.call(), ARTIST + '|f')
 
     def test_revoked_and_unauthorized(self):
         self.sql('DELETE FROM account_organization_ids')
