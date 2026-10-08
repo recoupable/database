@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / 'supabase/migrations/20261008010000_onboard_spotify_artist.sql'
+MIGRATION = ROOT / 'supabase/migrations/20261008020000_onboard_artists_atomically.sql'
 ACTOR = '10000000-0000-4000-8000-000000000001'
 ORG = '10000000-0000-4000-8000-000000000002'
 ARTIST = '10000000-0000-4000-8000-000000000003'
@@ -37,6 +37,8 @@ class SpotifyOnboarding(unittest.TestCase):
         GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
         GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
         ''')
+        cls.sql((ROOT / 'supabase/migrations/20250528095512_socials_profile_url_clean_trigger.sql').read_text())
+        cls.sql((ROOT / 'supabase/migrations/20260805190000_preserve_youtube_channel_url_case.sql').read_text())
         if MIGRATION.exists():
             cls.sql(MIGRATION.read_text())
 
@@ -129,9 +131,29 @@ class SpotifyOnboarding(unittest.TestCase):
         self.assertEqual(self.sql('SELECT count(*) FROM artist_organization_ids'), '1')
 
     def test_spotify_uri_reuses_verified_resource(self):
-        self.sql(f"INSERT INTO accounts VALUES ('{ARTIST}','Original name'); INSERT INTO socials(username,profile_url) VALUES ('{SPOTIFY}','spotify:artist:{SPOTIFY}'); INSERT INTO account_socials SELECT '{ARTIST}',id FROM socials;")
+        self.sql(f"INSERT INTO accounts VALUES ('{ARTIST}','Original name'); ALTER TABLE socials DISABLE TRIGGER trigger_clean_socials_profile_url; INSERT INTO socials(username,profile_url) VALUES ('{SPOTIFY}','spotify:artist:{SPOTIFY}'); ALTER TABLE socials ENABLE TRIGGER trigger_clean_socials_profile_url; INSERT INTO account_socials SELECT '{ARTIST}',id FROM socials;")
         self.assertEqual(self.call(), ARTIST + '|f')
 
     def test_non_spotify_host_is_not_identity_evidence(self):
         self.sql(f"INSERT INTO accounts VALUES ('{ARTIST}','Same name'); INSERT INTO socials(username,profile_url) VALUES ('{SPOTIFY}','https://example.invalid/artist/{SPOTIFY}'); INSERT INTO account_socials SELECT '{ARTIST}',id FROM socials;")
         self.assertNotEqual(self.call().split('|')[0], ARTIST)
+
+    def test_committed_spotify_social_is_persisted(self):
+        artist = self.call().split('|')[0]
+        self.assertEqual(self.sql(f"SELECT s.profile_url FROM socials s JOIN account_socials a ON a.social_id=s.id WHERE a.account_id='{artist}'"), f'open.spotify.com/artist/{SPOTIFY}')
+
+    def test_name_only_creation_rolls_back_on_attachment_failure(self):
+        self.sql("ALTER TABLE artist_organization_ids ADD CONSTRAINT fixture_failure CHECK (false) NOT VALID")
+        try:
+            self.sql(f"SET ROLE service_role; SELECT create_artist_with_roster('{ACTOR}', '{ORG}', 'Manual Artist');", fails=True)
+            self.assertEqual(self.sql('SELECT count(*) FROM accounts'), '2')
+        finally:
+            self.sql('ALTER TABLE artist_organization_ids DROP CONSTRAINT fixture_failure')
+        self.sql(f"SET ROLE service_role; SELECT create_artist_with_roster('{ACTOR}', '{ORG}', 'Manual Artist');")
+        self.assertEqual(self.sql('SELECT count(*) FROM artist_organization_ids'), '1')
+
+    def test_name_only_creation_rejects_nonmember(self):
+        self.sql('DELETE FROM account_organization_ids')
+        error = self.sql(f"SET ROLE service_role; SELECT create_artist_with_roster('{ACTOR}', '{ORG}', 'Manual Artist');", fails=True)
+        self.assertIn('Access denied', error)
+        self.assertEqual(self.sql('SELECT count(*) FROM accounts'), '2')
