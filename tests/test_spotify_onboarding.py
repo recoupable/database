@@ -181,6 +181,9 @@ class SpotifyOnboarding(unittest.TestCase):
         self.assertEqual(self.sql(f"SELECT count(*) FROM artist_organization_ids WHERE artist_id='{artist['id']}' AND organization_id='{ORG}'"), '1')
 
     def test_membership_lock_does_not_grant_identity_mutation(self):
-        error = self.sql(f"SET ROLE service_role; UPDATE account_organization_ids SET account_id='{ORG}' WHERE account_id='{ACTOR}';", fails=True)
-        self.assertIn('permission denied', error)
+        for column in ('account_id', 'organization_id'):
+            error = self.sql(f"SET ROLE service_role; UPDATE account_organization_ids SET {column}='{ORG}' WHERE account_id='{ACTOR}';", fails=True)
+            self.assertIn('permission denied', error)
+        for statement in (f"INSERT INTO account_organization_ids(account_id,organization_id) VALUES('{ORG}','{ACTOR}')", f"DELETE FROM account_organization_ids WHERE account_id='{ACTOR}'"):
+            self.assertIn('permission denied', self.sql('SET ROLE service_role; ' + statement, fails=True))
         self.assertEqual(self.sql(f"SELECT count(*) FROM account_organization_ids WHERE account_id='{ACTOR}' AND organization_id='{ORG}'"), '1')
