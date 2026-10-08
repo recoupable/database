@@ -13,13 +13,16 @@ jobs:
   release-cases:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      matrix:
+        postgres: [15, 16]
     steps:
       - uses: actions/checkout@v4
       - name: Install PostgreSQL
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-16
+          sudo apt-get install -y postgresql-${{ matrix.postgres }}
       - name: Test isolated metadata reviews
         run: |
-          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 -m unittest discover -s tests -p 'test_release_cases.py'

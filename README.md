@@ -33,7 +33,7 @@ python3 -m unittest discover -s tests -p 'test_release_cases.py'
 
 The runner starts a disposable Unix-socket-only cluster, applies the actual
 migration files listed in the runner, executes the assertions and stops/removes
-the cluster. CI runs the same command with PostgreSQL 16.
+the cluster. CI runs the same command with PostgreSQL 15 and 16.
 
 `supabase/tests/context_release_cases.sql` runs with synthetic fixtures inside a
 rolled-back transaction. It checks the real service role, cross-workspace denial,
@@ -43,11 +43,28 @@ membership and browser-role grants. Run it against a disposable database with th
 prerequisites applied, never a production database. A fixture owner needs setup
 permissions and permission to `SET ROLE service_role` for that test.
 
-The implementation was tested with PostgreSQL 17 and a minimal legacy bootstrap
-plus the actual prerequisite Context SQL. That is not a replay of all historical
-migrations. Before deployment, inspect Recoup's live baseline and grants and run
-its normal migration checks. Live Recoup schema access was unavailable through
-the connector during implementation, so this deployment gate remains open.
+The implementation was tested locally with PostgreSQL 15 and 17 and a minimal
+legacy bootstrap plus the actual prerequisite Context SQL. That is not a replay
+of all historical migrations.
+
+On 2026-10-08, a read-only production audit confirmed PostgreSQL 15.6, the required
+Context migrations, the request composite key, dependency tables/functions, and
+service-role read and row-lock privileges. The existing Context evidence tables
+have RLS enabled and no browser-role CRUD grants; dependency RPCs inspected are
+security-invoker functions executable by the service role. The membership table
+has browser grants but RLS enabled with no policies, so those grants alone do not
+allow browser row access. A transaction using the actual `service_role` confirmed
+schema access, scoped reads and the built-in SHA-256 function, then rolled back.
+Neither new review migration was deployed during this audit.
+
+This closes the narrow prerequisite schema/grant inspection gate, not deployment
+or hosted workflow verification. The previously reported hosted preview project
+was not accessible through this connector during the audit; do not infer current
+preview health from an earlier CI result. Run normal migration checks on the final
+PR commit, then verify the authorized HTTP/MCP/UI paths after approved rollout.
+An empty workspace needs a separately authorized collection through the supported
+workflow before saved-evidence review can be exercised; do not insert fabricated
+production evidence to make a review test pass.
 
 The original migration is preserved after its hosted PR preview passed.
 `20261008160100_context_release_case_cursor.sql` is a forward-only correction
