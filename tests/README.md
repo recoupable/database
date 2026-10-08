@@ -12,7 +12,7 @@ Coverage: new/existing exact identity, case-sensitive namesakes, retries, 16 con
 
 ## Release order and boundary
 
-Apply `20261008020000_onboard_artists_atomically.sql` before deploying the API consumer. It adds service-role-only, security-invoker functions. It does not clean up existing data, add global identity constraints, change canonical mappings, or assign catalog/publishing rights. Existing ambiguous mappings are rejected for review.
+Retain the original `20261008010000` migration already recorded by the preview, then apply the corrective `20261008020000_onboard_artists_atomically.sql` before deploying the API consumer. It adds service-role-only, security-invoker functions. It does not clean up existing data, add global identity constraints, change canonical mappings, or assign catalog/publishing rights. Existing ambiguous mappings are rejected for review.
 
 Before rollout, verify the target has the existing unique roster-pair constraints, test the function with the service role in an isolated environment, and confirm the API's normal membership authorization. Concurrent requests through this function are serialized; unrelated legacy writers do not acquire this lock and remain part of the broader identity work in recoupable/app#2119.
 

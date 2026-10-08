@@ -39,8 +39,8 @@ class SpotifyOnboarding(unittest.TestCase):
         ''')
         cls.sql((ROOT / 'supabase/migrations/20250528095512_socials_profile_url_clean_trigger.sql').read_text())
         cls.sql((ROOT / 'supabase/migrations/20260805190000_preserve_youtube_channel_url_case.sql').read_text())
-        if MIGRATION.exists():
-            cls.sql(MIGRATION.read_text())
+        cls.sql((ROOT / 'supabase/migrations/20261008010000_onboard_spotify_artist.sql').read_text())
+        cls.sql(MIGRATION.read_text())
 
     @classmethod
     def stop(cls):
