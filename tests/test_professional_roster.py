@@ -20,6 +20,7 @@ class ProfessionalRoster(unittest.TestCase):
         subprocess.run(['pg_ctl','-D',str(cls.cluster),'-l',str(pathlib.Path(cls.tmp.name)/'pg.log'),'-o',f"-k {cls.tmp.name} -p 55439 -c listen_addresses=''",'-w','start'],check=True,capture_output=True)
         cls.addClassCleanup(cls.stop)
         cls.sql("CREATE ROLE service_role BYPASSRLS; CREATE ROLE anon; CREATE ROLE authenticated; CREATE TABLE accounts(id uuid PRIMARY KEY); CREATE TABLE account_organization_ids(account_id uuid,organization_id uuid,updated_at timestamptz); GRANT USAGE ON SCHEMA public TO service_role; GRANT SELECT ON account_organization_ids TO service_role;")
+        cls.sql(next((ROOT/'supabase/migrations').glob('20250129222308*')).read_text().split('alter table')[0])
         cls.sql((ROOT/'supabase/migrations/20261008030000_onboarding_membership_lock_privilege.sql').read_text())
         for migration in sorted((ROOT/'supabase/migrations').glob('20261008050*.sql')):
             cls.sql(migration.read_text())
@@ -86,7 +87,7 @@ class ProfessionalRoster(unittest.TestCase):
         self.assertIn('Select an existing',self.command({'mode':'existing'},key=ORG,fails=True))
 
     def test_explicit_intent_confirmation_and_valid_roles_required(self):
-        for patch in [{'confirmed':False},{'roster_intent':'research'},{'roles':[]},{'roles':['owner']},{'roles':[None]},{'name':' '},{'name':'a'}]:
+        for patch in [{'confirmed':False},{'roster_intent':'research'},{'roles':[]},{'roles':['owner']},{'roles':[None]},{'name':' '},{'name':'a'},{'name':123},{'name':{'text':'Name'}}]:
             self.command(patch,key=OTHER,fails=True)
         self.assertEqual(self.sql('SELECT count(*) FROM organization_professionals'),'0')
 
@@ -120,3 +121,12 @@ class ProfessionalRoster(unittest.TestCase):
         self.assertEqual(len(page2['professionals']),2)
         self.assertIsNone(page2['next_cursor'])
         self.assertEqual(len({p['id'] for p in page1['professionals']+page2['professionals']}),102)
+
+    def test_table_rejects_invalid_names_and_duplicate_roles(self):
+        for name,roles in [("  ","ARRAY['songwriter']"),("Valid", "ARRAY['songwriter','songwriter']")]:
+            self.sql(f"SET ROLE service_role; INSERT INTO organization_professionals(organization_id,name,roles,confirmed_by) VALUES ('{ORG}','{name}',{roles},'{ACTOR}')",fails=True)
+
+    def test_direct_update_refreshes_timestamp(self):
+        person=self.command()['professional']
+        self.sql(f"SET ROLE service_role; UPDATE organization_professionals SET updated_at='2000-01-01' WHERE id='{person['id']}'")
+        self.assertEqual(self.sql("SELECT count(*) FROM organization_professionals WHERE updated_at > '2026-01-01'"),'1')
