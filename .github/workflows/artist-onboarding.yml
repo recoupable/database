@@ -1,0 +1,25 @@
+name: Artist onboarding transactions
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  onboarding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16
+      - name: Test isolated artist onboarding
+        run: |
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 -m unittest discover -s tests -p 'test_spotify_onboarding.py'
