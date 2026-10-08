@@ -3,6 +3,7 @@ Run: python3 -m unittest discover -s tests -p 'test_spotify_onboarding.py'
 Requires PostgreSQL initdb, pg_ctl and psql on PATH.
 """
 import concurrent.futures
+import json
 import pathlib
 import subprocess
 import tempfile
@@ -26,8 +27,12 @@ class SpotifyOnboarding(unittest.TestCase):
         cls.addClassCleanup(cls.stop)
         cls.sql('''
         CREATE ROLE service_role; CREATE ROLE anon; CREATE ROLE authenticated;
-        CREATE TABLE accounts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text);
-        CREATE TABLE account_info (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, account_id uuid REFERENCES accounts(id));
+        CREATE TABLE accounts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, timestamp bigint DEFAULT extract(epoch from now()));
+        CREATE TABLE account_info (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid REFERENCES accounts(id),
+          updated_at timestamptz NOT NULL DEFAULT now(), image text, knowledges jsonb DEFAULT '[]'::jsonb,
+          label text, instruction text, organization text, job_title text, role_type text, company_name text
+        );
         CREATE TABLE account_organization_ids (account_id uuid REFERENCES accounts(id), organization_id uuid REFERENCES accounts(id));
         CREATE TABLE socials (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), username text NOT NULL, profile_url text NOT NULL UNIQUE);
         CREATE TABLE account_socials (account_id uuid REFERENCES accounts(id), social_id uuid REFERENCES socials(id), UNIQUE(account_id, social_id));
@@ -157,3 +162,17 @@ class SpotifyOnboarding(unittest.TestCase):
         error = self.sql(f"SET ROLE service_role; SELECT create_artist_with_roster('{ACTOR}', '{ORG}', 'Manual Artist');", fails=True)
         self.assertIn('Access denied', error)
         self.assertEqual(self.sql('SELECT count(*) FROM accounts'), '2')
+
+    def test_name_only_response_preserves_profile_shape(self):
+        response = self.sql(f"SET ROLE service_role; SELECT create_artist_with_roster('{ACTOR}', '{ORG}', 'Manual Artist');").splitlines()[-1]
+        artist = json.loads(response)
+        self.assertEqual(artist['account_id'], artist['id'])
+        self.assertEqual(artist['name'], 'Manual Artist')
+        self.assertIsInstance(artist['timestamp'], int)
+        self.assertEqual(artist['account_socials'], [])
+        info = artist['account_info'][0]
+        self.assertIsInstance(info['id'], str)
+        self.assertEqual(info['account_id'], artist['id'])
+        self.assertIsInstance(info['updated_at'], str)
+        self.assertEqual(info['knowledges'], [])
+        self.assertEqual(self.sql(f"SELECT count(*) FROM artist_organization_ids WHERE artist_id='{artist['id']}' AND organization_id='{ORG}'"), '1')
