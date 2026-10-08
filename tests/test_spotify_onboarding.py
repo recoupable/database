@@ -33,19 +33,22 @@ class SpotifyOnboarding(unittest.TestCase):
           updated_at timestamptz NOT NULL DEFAULT now(), image text, knowledges jsonb DEFAULT '[]'::jsonb,
           label text, instruction text, organization text, job_title text, role_type text, company_name text
         );
-        CREATE TABLE account_organization_ids (account_id uuid REFERENCES accounts(id), organization_id uuid REFERENCES accounts(id));
+        CREATE TABLE account_organization_ids (account_id uuid REFERENCES accounts(id), organization_id uuid REFERENCES accounts(id), updated_at timestamptz DEFAULT now());
         CREATE TABLE socials (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), username text NOT NULL, profile_url text NOT NULL UNIQUE);
         CREATE TABLE account_socials (account_id uuid REFERENCES accounts(id), social_id uuid REFERENCES socials(id), UNIQUE(account_id, social_id));
         CREATE TABLE account_artist_ids (account_id uuid REFERENCES accounts(id), artist_id uuid REFERENCES accounts(id), UNIQUE(account_id, artist_id));
         CREATE TABLE artist_organization_ids (artist_id uuid REFERENCES accounts(id), organization_id uuid REFERENCES accounts(id), UNIQUE(artist_id, organization_id));
         GRANT USAGE ON SCHEMA public TO service_role;
-        GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+        GRANT SELECT, INSERT, UPDATE ON accounts, account_info, socials, account_artist_ids TO service_role;
+        GRANT SELECT, INSERT ON account_socials, artist_organization_ids TO service_role;
+        GRANT SELECT ON account_organization_ids TO service_role;
         GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
         ''')
         cls.sql((ROOT / 'supabase/migrations/20250528095512_socials_profile_url_clean_trigger.sql').read_text())
         cls.sql((ROOT / 'supabase/migrations/20260805190000_preserve_youtube_channel_url_case.sql').read_text())
         cls.sql((ROOT / 'supabase/migrations/20261008010000_onboard_spotify_artist.sql').read_text())
         cls.sql(MIGRATION.read_text())
+        cls.sql((ROOT / 'supabase/migrations/20261008030000_onboarding_membership_lock_privilege.sql').read_text())
 
     @classmethod
     def stop(cls):
@@ -176,3 +179,8 @@ class SpotifyOnboarding(unittest.TestCase):
         self.assertIsInstance(info['updated_at'], str)
         self.assertEqual(info['knowledges'], [])
         self.assertEqual(self.sql(f"SELECT count(*) FROM artist_organization_ids WHERE artist_id='{artist['id']}' AND organization_id='{ORG}'"), '1')
+
+    def test_membership_lock_does_not_grant_identity_mutation(self):
+        error = self.sql(f"SET ROLE service_role; UPDATE account_organization_ids SET account_id='{ORG}' WHERE account_id='{ACTOR}';", fails=True)
+        self.assertIn('permission denied', error)
+        self.assertEqual(self.sql(f"SELECT count(*) FROM account_organization_ids WHERE account_id='{ACTOR}' AND organization_id='{ORG}'"), '1')
