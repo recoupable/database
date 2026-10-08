@@ -26,6 +26,13 @@ BEGIN
     END;
     IF NOT rejected THEN RAISE EXCEPTION 'Short-lived artifact accepted without expiry'; END IF;
   END LOOP;
+  PERFORM public.oauth_store_upsert(ns,'Grant',repeat('c',64),'finite-fixture',300,NULL,NULL,NULL);
+  rejected := false;
+  BEGIN
+    PERFORM public.oauth_store_upsert(ns,'Grant',repeat('c',64),'persistent-overwrite',NULL,NULL,NULL,NULL);
+  EXCEPTION WHEN invalid_parameter_value THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Finite approval silently extended'; END IF;
   PERFORM public.oauth_store_revoke_grant(ns,grant_id);
   IF jsonb_array_length(public.oauth_store_list_connections(ns,account_id)) <> 0 THEN RAISE EXCEPTION 'Revoked connection remains'; END IF;
   IF public.oauth_store_find(ns,'RefreshToken','id',grant_id) IS NOT NULL THEN RAISE EXCEPTION 'Revoked refresh remains'; END IF;

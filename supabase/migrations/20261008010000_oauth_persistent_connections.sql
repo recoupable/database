@@ -31,9 +31,11 @@ BEGIN
     user_code_hash = EXCLUDED.user_code_hash
     -- Neither the grant binding nor consumed marker may be reset by saving a stale payload.
     WHERE public.oauth_provider_artifacts.grant_hash IS NOT DISTINCT FROM EXCLUDED.grant_hash
-      AND public.oauth_provider_artifacts.account_hash IS NOT DISTINCT FROM EXCLUDED.account_hash;
+      AND public.oauth_provider_artifacts.account_hash IS NOT DISTINCT FROM EXCLUDED.account_hash
+      -- A new approval gets a new ID; never extend an existing finite approval.
+      AND (public.oauth_provider_artifacts.expires_at IS NULL OR EXCLUDED.expires_at IS NOT NULL);
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'OAuth artifact grant binding cannot change' USING ERRCODE = '22023';
+    RAISE EXCEPTION 'OAuth artifact binding or finite lifetime cannot change' USING ERRCODE = '22023';
   END IF;
 END;
 $$;
