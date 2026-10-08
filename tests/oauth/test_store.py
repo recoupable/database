@@ -117,8 +117,8 @@ class OAuthStoreTest(unittest.TestCase):
         result = self.sql("SELECT public.oauth_store_upsert('test-issuer', 'Client', 'raw-secret', 'encrypted', NULL, NULL, NULL, NULL)", check=False)
         self.assertNotEqual(result.returncode, 0)
 
-    def test_only_client_can_omit_expiry(self):
-        for model in ['AuthorizationCode', 'AccessToken', 'RefreshToken', 'Grant', 'Session']:
+    def test_short_lived_artifacts_cannot_omit_expiry(self):
+        for model in ['AuthorizationCode', 'AccessToken', 'Session', 'RecoupInteraction']:
             result = self.sql(f"SELECT public.oauth_store_upsert('test-issuer', '{model}', '{'a' * 64}', 'encrypted', NULL, NULL, NULL, NULL)", check=False)
             self.assertNotEqual(result.returncode, 0)
         self.put(model='Client', ttl='NULL')
