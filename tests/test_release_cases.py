@@ -14,6 +14,7 @@ MIGRATIONS = [
     '20260924110000_context_release_track_identity_review.sql',
     '20261008030000_onboarding_membership_lock_privilege.sql',
     '20261008160000_context_release_cases.sql',
+    '20261008160100_context_release_case_cursor.sql',
 ]
 
 

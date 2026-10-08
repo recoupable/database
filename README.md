@@ -49,6 +49,11 @@ migrations. Before deployment, inspect Recoup's live baseline and grants and run
 its normal migration checks. Live Recoup schema access was unavailable through
 the connector during implementation, so this deployment gate remains open.
 
+The original migration is preserved after its hosted PR preview passed.
+`20261008160100_context_release_case_cursor.sql` is a forward-only correction
+that rejects missing, foreign and non-release cursors with the same controlled
+permission error. Apply both migrations in order.
+
 ### Rollout and rollback
 
 Apply this migration through the approved database release process before the

@@ -14,7 +14,7 @@ begin
  insert into public.context_requests(id,owner_id,created_by,resource_id,idempotency_key,input_fingerprint,input,status,output)
  values(req,owner,member,resource,'case-fixture',repeat('a',64),jsonb_build_object('kind','release','releaseId',repeat('A',22),'url','https://open.spotify.com/album/'||repeat('A',22)), 'partial',jsonb_build_object('subjectIds',jsonb_build_array(subject)));
  current_case:=public.read_context_release_case(member,owner,req);
- if current_case->>'readiness'<>'blocked' or current_case->'evidence_manifest'<>'[]'::jsonb then raise exception 'Uncollected metadata became ready'; end if;
+ if current_case->>'readiness' is distinct from 'blocked' or current_case->'evidence_manifest' is distinct from '[]'::jsonb then raise exception 'Uncollected metadata became ready'; end if;
  insert into public.context_attempts(id,owner_id,request_id,module,attempt,status,provider,recipe_version,schema_version)
  values(attempt,owner,req,'spotify_release_context',1,'succeeded','spotify','1','1');
  insert into public.context_sources(id,owner_id,kind,source_url) values(source,owner,'provider_metadata','https://api.spotify.com/v1/albums/'||repeat('A',22));
@@ -28,21 +28,25 @@ begin
  insert into public.context_documents(id,owner_id,subject_id,topic,current_result_id,revision) values(doc,owner,subject,'spotify_release_context',result,1);
  perform public.save_context_spotify_release_track_slots(owner,req,subject,result);
  current_case:=public.read_context_release_case(member,owner,req);
- if current_case->>'readiness'<>'partial' or current_case->>'title'<>'Fixture release' or jsonb_array_length(current_case->'tracks')<>1
+ if current_case->>'readiness' is distinct from 'partial' or current_case->>'title' is distinct from 'Fixture release' or jsonb_array_length(current_case->'tracks') is distinct from 1
  then raise exception 'Source-backed case projection failed: %',current_case; end if;
- if public.list_context_release_cases(member,owner)->'cases'->0->>'request_id'<>req::text then raise exception 'Case list lost selected scope'; end if;
+ if public.list_context_release_cases(member,owner)->'cases'->0->>'request_id' is distinct from req::text then raise exception 'Case list lost selected scope'; end if;
  begin
   perform public.read_context_release_case(outsider,outsider,req);
   raise exception 'TEST_FAILURE: other owner read';
  exception when insufficient_privilege then null; end;
  -- Run the full read and insert path with the production service role, not the fixture owner.
  set local role service_role;
- if public.read_context_release_case(member,owner,req)->>'title'<>'Fixture release' then raise exception 'Service role cannot read'; end if;
- if current_case->'capabilities'->>'distribute'<>'unsupported' then raise exception 'Metadata implied external authority'; end if;
+ if public.read_context_release_case(member,owner,req)->>'title' is distinct from 'Fixture release' then raise exception 'Service role cannot read'; end if;
+ if current_case->'capabilities'->>'distribute' is distinct from 'unsupported' then raise exception 'Metadata implied external authority'; end if;
+ begin
+  perform public.list_context_release_cases(member,owner,gen_random_uuid());
+  raise exception 'TEST_FAILURE: invalid cursor accepted';
+ exception when insufficient_privilege then null; end;
  old_hash:=current_case->>'fingerprint';
  receipt:=public.review_context_release_case(member,owner,req,old_hash,'reviewed','Checked metadata','review-1'); saved_id:=(receipt->>'id')::uuid;
  replay:=public.review_context_release_case(member,owner,req,old_hash,'reviewed','Checked metadata','review-1');
- if replay->>'id'<>receipt->>'id' then raise exception 'Retry duplicated review'; end if;
+ if replay->>'id' is distinct from receipt->>'id' then raise exception 'Retry duplicated review'; end if;
  reset role;
  begin
   perform public.review_context_release_case(member,owner,req,old_hash,'needs_changes','Different','review-1');
@@ -53,26 +57,26 @@ begin
   raise exception 'TEST_FAILURE: outsider read';
  exception when insufficient_privilege then null; end;
  update public.context_documents set revision=2 where id=doc;
- if public.read_context_release_case_review(member,owner,saved_id)->>'stale'<>'true' then raise exception 'Changed evidence review remained current'; end if;
+ if public.read_context_release_case_review(member,owner,saved_id)->>'stale' is distinct from 'true' then raise exception 'Changed evidence review remained current'; end if;
  begin
   perform public.review_context_release_case(member,owner,req,old_hash,'reviewed','','review-2');
   raise exception 'TEST_FAILURE: stale review saved';
  exception when serialization_failure then null; end;
- if public.read_context_release_case_review(member,owner,saved_id)->'snapshot'='null'::jsonb then raise exception 'Authorized superseded snapshot lost'; end if;
+ if jsonb_typeof(public.read_context_release_case_review(member,owner,saved_id)->'snapshot') is distinct from 'object' then raise exception 'Authorized superseded snapshot lost'; end if;
  -- Large releases are visibly bounded and must not receive a whole-case review.
  update public.context_results set normalized_response=jsonb_set(normalized_response,'{tracks}',
   (select jsonb_agg(jsonb_build_object('id',repeat('B',22),'name','Track','type','track','disc_number',1,'track_number',n)) from generate_series(1,101) n)) where id=result;
  update public.context_results set normalized_response=jsonb_set(normalized_response,'{trackCoverage}', '{"extent":"full","collectedSlots":101,"reportedTotal":101}') where id=result;
  perform public.save_context_spotify_release_track_slots(owner,req,subject,result);
  current_case:=public.read_context_release_case(member,owner,req);
- if current_case->>'reviewable'<>'false' or current_case->'track_page'->>'hasMore'<>'true' then raise exception 'Truncated release can be reviewed'; end if;
+ if current_case->>'reviewable' is distinct from 'false' or current_case->'track_page'->>'hasMore' is distinct from 'true' then raise exception 'Truncated release can be reviewed'; end if;
  begin
   perform public.review_context_release_case(member,owner,req,current_case->>'fingerprint','reviewed','','large-review');
   raise exception 'TEST_FAILURE: truncated review saved';
  exception when sqlstate '22023' then null; end;
  perform public.withdraw_context_source(owner,source);
  receipt:=public.read_context_release_case_review(member,owner,saved_id);
- if receipt->>'state'<>'unavailable' or receipt->'snapshot'<>'null'::jsonb or receipt->'note'<>'null'::jsonb then raise exception 'Withdrawn private interpretation leaked'; end if;
+ if receipt->>'state' is distinct from 'unavailable' or receipt->'snapshot' is distinct from 'null'::jsonb or receipt->'note' is distinct from 'null'::jsonb then raise exception 'Withdrawn private interpretation leaked'; end if;
  delete from public.account_organization_ids where account_id=member and organization_id=owner;
  begin
   perform public.read_context_release_case_review(member,owner,saved_id);
