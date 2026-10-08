@@ -14,12 +14,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         postgres: [15, 16]
     steps:
       - uses: actions/checkout@v4
       - name: Install PostgreSQL
         run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get update
           sudo apt-get install -y postgresql-${{ matrix.postgres }}
       - name: Test isolated metadata reviews
