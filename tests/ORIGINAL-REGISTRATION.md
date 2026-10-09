@@ -1,7 +1,7 @@
 # Private original registration receipts
 
-Run `python3 -m unittest discover -s tests -p 'test_original_registration.py'`
-with PostgreSQL binaries on PATH. Fourteen registration cases plus one inherited release case
+Run `python3 -m unittest discover -s tests -p 'test_original*.py'`
+with PostgreSQL binaries on PATH. Fifteen registration cases plus two inherited release executions
 run in a disposable cluster; no hosted bytes, identities or balances are used.
 CI covers PostgreSQL15/16; local checks also cover17.
 
@@ -37,10 +37,17 @@ index for retained object conflict probes. It excludes versions without objects.
 No constant-time lookup or production index performance is claimed. Earlier
 preview-applied original-registration and neutral-path migrations are unchanged.
 
-`20261009230200` serializes globally unique source creation after the owner
-retry lock. A forced cross-owner race returns one saved receipt and one controlled
+`20261009230200` serializes source creation among callers of this RPC after the
+owner retry lock. Raw service-table writers do not participate in that lock. A forced cross-owner race returns one saved receipt and one controlled
 access denial; source IDs cannot be claimed across owners. Removal coverage restores
 content and proves the receipt readable before testing removal denial on read/replay.
 Index build timeouts remain bounded (5s lock/30s statement): production size and
 lock preflight is required before approved rollout, and a timeout aborts rather
 than permitting an unbounded writer block. This is not proof of production scale.
+
+Forward-only `20261009230300` makes source-lock acquisition nonblocking: a
+contended source returns the existing controlled unavailable denial immediately.
+A held-lock fixture failed before this change and passes afterward. Migration
+SET LOCAL timeouts apply only to migration execution, not later RPC invocations.
+Owner advisory and row locks still use the caller session timeout; this change
+does not claim a whole-operation runtime bound or protection from raw writers.
