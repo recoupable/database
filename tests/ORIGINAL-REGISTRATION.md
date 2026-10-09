@@ -1,7 +1,7 @@
 # Private original registration receipts
 
 Run `python3 -m unittest discover -s tests -p 'test_original_registration.py'`
-with PostgreSQL binaries on PATH. Eleven new cases plus one inherited release case
+with PostgreSQL binaries on PATH. Fourteen registration cases plus one inherited release case
 run in a disposable cluster; no hosted bytes, identities or balances are used.
 CI covers PostgreSQL15/16; local checks also cover17.
 
@@ -36,3 +36,11 @@ The forward-only `20261009230100` migration adds a partial owner/storage-path
 index for retained object conflict probes. It excludes versions without objects.
 No constant-time lookup or production index performance is claimed. Earlier
 preview-applied original-registration and neutral-path migrations are unchanged.
+
+`20261009230200` serializes globally unique source creation after the owner
+retry lock. A forced cross-owner race returns one saved receipt and one controlled
+access denial; source IDs cannot be claimed across owners. Removal coverage restores
+content and proves the receipt readable before testing removal denial on read/replay.
+Index build timeouts remain bounded (5s lock/30s statement): production size and
+lock preflight is required before approved rollout, and a timeout aborts rather
+than permitting an unbounded writer block. This is not proof of production scale.
