@@ -43,7 +43,7 @@ class OriginalSourceRaces(fixture.OriginalFixture):
         finally:
             self.sql("DROP TRIGGER delay_original_source ON context_sources; DROP FUNCTION delay_original_source();")
 
-    def test_contended_source_lock_returns_without_waiting(self):
+    def with_held_source_lock(self, action):
         def hold():
             self.sql(f"SET application_name='original-lock-fixture'; BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('context-original-source:{self.source}',0)); SELECT pg_sleep(1); ROLLBACK;")
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -52,6 +52,15 @@ class OriginalSourceRaces(fixture.OriginalFixture):
                 if self.sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='original-lock-fixture' AND wait_event='PgSleep')").stdout.strip()=='t': break
                 time.sleep(0.01)
             else: self.fail('Fixture did not acquire source lock')
+            action()
+            held.result()
+
+    def test_contended_source_lock_returns_without_waiting(self):
+        def attempt():
             with self.assertRaisesRegex(AssertionError,'Original unavailable'):
                 self.register()
-            held.result()
+        self.with_held_source_lock(attempt)
+
+    def test_exact_replay_uses_retained_receipt_before_source_lock(self):
+        receipt = self.register()
+        self.with_held_source_lock(lambda: self.assertEqual(self.register(), receipt))

@@ -24,7 +24,7 @@ Seven new transaction cases plus one inherited release-case execution cover
 exact receipt/location readback, fresh owner/member sessions, foreign existing
 and missing receipts, revoked membership, withdrawal/removal, path/content/digest
 mutation, exact version history and both browser-role denials. The combined
-original receipt/retrieval suite runs 25 executions per PostgreSQL version.
+original receipt/retrieval suite runs 26 executions per PostgreSQL version.
 Six new cases failed before implementation; all data are synthetic in disposable
 clusters. No hosted bytes, URLs or business rows are exercised. Bounded staging,
 immutable object acquisition and safe orphan reconciliation remain required.

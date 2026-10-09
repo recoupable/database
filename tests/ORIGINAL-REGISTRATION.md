@@ -1,7 +1,7 @@
 # Private original registration receipts
 
 Run `python3 -m unittest discover -s tests -p 'test_original*.py'`
-with PostgreSQL binaries on PATH. Fifteen registration cases plus two inherited release executions
+with PostgreSQL binaries on PATH. Sixteen registration cases plus two inherited release executions
 run in a disposable cluster; no hosted bytes, identities or balances are used.
 CI covers PostgreSQL15/16; local checks also cover17.
 
@@ -54,3 +54,9 @@ A held-lock fixture failed before this change and passes afterward. Migration
 SET LOCAL timeouts apply only to migration execution, not later RPC invocations.
 Owner advisory and row locks still use the caller session timeout; this change
 does not claim a whole-operation runtime bound or protection from raw writers.
+
+Forward-only `20261009230400` reads and validates an existing exact receipt before
+source-lock acquisition. This avoids transient denial during transaction lock
+release ordering and never skips current authorization/withdrawal/integrity checks.
+A retained-receipt/held-source-lock test failed before this correction. New
+registrations still deny source contention immediately.
