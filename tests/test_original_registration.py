@@ -54,6 +54,8 @@ class OriginalRegistration(fixture.OriginalFixture):
         for role in ['anon', 'authenticated']:
             with self.assertRaisesRegex(AssertionError, 'permission denied'):
                 self.sql(f"SET ROLE {role}; SELECT read_context_original_registration('{self.actor}','{self.owner}','{uuid.uuid4()}')")
+            with self.assertRaisesRegex(AssertionError, 'permission denied'):
+                self.sql(f"SET ROLE {role}; SELECT register_context_original('{self.actor}','{self.owner}','{self.source}','browser','{self.path}','{'a'*64}',26,'text/csv')")
 
     def test_same_bytes_new_work_key_reuses_the_retained_version(self):
         first, second = self.register(), self.register(key='second')
@@ -82,3 +84,8 @@ class OriginalRegistration(fixture.OriginalFixture):
         with self.assertRaisesRegex(AssertionError, 'Original storage conflict'):
             self.register(key='other', source=new_source)
         self.assertEqual(self.sql(f"SELECT count(*) FROM context_sources WHERE id='{new_source}'").stdout.strip(), '0')
+
+    def test_explicit_empty_inputs_are_not_repaired_by_fixture(self):
+        for field in ['actor', 'owner', 'source', 'path']:
+            with self.subTest(field=field):
+                with self.assertRaises(AssertionError): self.register(**{field: ''})
