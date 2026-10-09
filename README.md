@@ -82,3 +82,13 @@ If application rollout fails, revert the dependent API/UI changes first and reta
 the additive table and receipts. Do not drop historical review data as a routine
 rollback. Any later schema removal requires a separate reviewed retention/export
 plan. Existing Context collection paths are unchanged.
+
+### Neutral original object addresses
+
+Forward-only `20261009230000_context_original_neutral_path.sql` permits canonical
+owner/UUID `.original` paths for either verified PDF or CSV media type. Legacy
+matching `.pdf`/`.csv` paths and historical receipts remain valid; the original
+preview-applied migration is unchanged. Existing owner/work-key serialization,
+changed-payload conflict, exact replay and service-only permissions are retained.
+The server must verify bytes and media type; SQL does not inspect stored bytes.
+No production migration or intake has occurred.
