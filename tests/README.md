@@ -31,3 +31,6 @@ Apply migrations `20261008050000` through `20261008050300` before the API and ap
 An operator confirmation is a scoped assertion, not globally verified identity. New records create no login account; existing IDs can only be reused inside their organization. Roles create no publishing, royalty, catalog, or company authority. There is no automatic name merge, enrichment, personal-context import, or cross-organization identity linkage. Submitted-name Context intake remains separate.
 
 Replaying the same organization/actor/key and normalized input returns the saved response after a fresh access check. A changed request conflicts. A deliberate new key can create a same-name person after explicit confirmation; the system does not claim names uniquely identify people. No production records are changed by these tests.
+
+Retained request evidence discovery: see [EVIDENCE-MANIFEST.md](EVIDENCE-MANIFEST.md)
+for the read-only version manifest, transaction tests and deployment limits.
