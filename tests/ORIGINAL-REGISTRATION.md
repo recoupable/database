@@ -31,3 +31,6 @@ Before approved rollout audit current source/version schema, actor authorization
 lock/table prerequisites and normal migration integration. Verify service-only
 permissions and migration body afterward. No production rollout or actual
 customer registration is claimed by local/CI/preview results.
+
+The separately reviewed [internal retrieval lookup](./ORIGINAL-RETRIEVAL.md)
+reuses the receipt authority without exposing paths in ordinary receipt reads.
