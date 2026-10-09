@@ -1,7 +1,7 @@
 # Private original registration receipts
 
 Run `python3 -m unittest discover -s tests -p 'test_original_registration.py'`
-with PostgreSQL binaries on PATH. Ten new cases plus one inherited release case
+with PostgreSQL binaries on PATH. Eleven new cases plus one inherited release case
 run in a disposable cluster; no hosted bytes, identities or balances are used.
 CI covers PostgreSQL15/16; local checks also cover17.
 
