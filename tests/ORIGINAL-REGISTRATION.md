@@ -1,8 +1,9 @@
 # Private original registration receipts
 
 Run `python3 -m unittest discover -s tests -p 'test_original*.py'`
-with PostgreSQL binaries on PATH. Sixteen registration cases plus two inherited release executions
-run in a disposable cluster; no hosted bytes, identities or balances are used.
+with PostgreSQL binaries on PATH. The matching receipt, retrieval and race suites
+run 26 executions per version in a disposable cluster; no hosted bytes, identities
+or balances are used.
 CI covers PostgreSQL15/16; local checks also cover17.
 
 The migration adds service-only invoker register/read RPCs using existing
