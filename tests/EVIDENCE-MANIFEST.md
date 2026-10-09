@@ -26,5 +26,10 @@ CI runs PostgreSQL 15 and 16. Local validation also covers PostgreSQL 17.
 Forward migration `20261009200001` inlines the retained-version query in the
 bounded wrapper and revokes the unbounded helper from `service_role`. Browser
 roles remain denied; the original preview-applied migration is unchanged.
+Forward migration `20261009200002` selects at most 51 cursor-eligible versions
+before aggregating their evidence kinds and current status. This bounds the
+provenance aggregation, not all eligibility scans; query cost still depends on
+history size and available indexes. The 56-version paging case checks complete
+coverage without overlap.
 The API must supply the authenticated actor and validate returned scope/metadata.
 Release requires explicit approval and production migration/permission verification.
