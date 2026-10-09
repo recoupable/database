@@ -38,5 +38,7 @@ begin
   delete from public.account_catalogs where catalog=c;
   if public.commit_catalog_stream_track(r2.id,'USAAA2400001',result) then raise exception 'Removed owner'; end if;
   if exists(select 1 from public.claim_catalog_stream_run(c,'2026-10-12')) then raise exception 'Orphan claim'; end if;
+  delete from public.accounts where id='00000000-0000-4000-8000-000000000001';
+  if exists(select 1 from public.catalog_stream_tracking where catalog_id=c) or exists(select 1 from public.catalog_stream_runs where catalog_id=c) or exists(select 1 from public.catalog_stream_observations where catalog_id=c) then raise exception 'Owning account deletion failed to clean up private streams'; end if;
 end $$;
 rollback;

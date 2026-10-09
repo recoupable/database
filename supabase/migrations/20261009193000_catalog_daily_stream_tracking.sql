@@ -1,7 +1,7 @@
 -- Private calendar-day series, separate from public cumulative song_measurements.
 create table public.catalog_stream_tracking (
   catalog_id uuid primary key references public.catalogs(id) on delete cascade,
-  owner_id uuid not null references public.accounts(id),
+  owner_id uuid not null references public.accounts(id) on delete cascade,
   enabled boolean not null default false,
   revision uuid not null default gen_random_uuid(),
   updated_at timestamptz not null default now()
