@@ -89,3 +89,25 @@ class OriginalRegistration(fixture.OriginalFixture):
         for field in ['actor', 'owner', 'source', 'path']:
             with self.subTest(field=field):
                 with self.assertRaises(AssertionError): self.register(**{field: ''})
+
+    def test_neutral_path_and_legacy_receipts_survive_forward_change(self):
+        legacy = self.register()
+        neutral = self.path.replace(self.object, str(uuid.uuid4())).replace('.csv','.original')
+        saved = self.register(key='neutral',digest='b'*64,path=neutral)
+        self.assertEqual(self.register(key='neutral',digest='b'*64,path=neutral),saved)
+        self.assertEqual(self.read(legacy['id']),legacy)
+        self.assertEqual(self.register(),legacy)
+        self.assertEqual(self.read(saved['id']),saved)
+
+    def test_simultaneous_changed_type_neutral_retry_has_one_receipt(self):
+        neutral=self.path.replace('.csv','.original')
+        def call(kind):
+            try:
+                return self.register(path=neutral,media_type=kind,digest=('a' if kind=='text/csv' else 'b')*64)
+            except AssertionError as error:
+                return str(error)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(call,['text/csv','application/pdf']))
+        self.assertEqual(sum(isinstance(r,dict) for r in results),1)
+        self.assertTrue(any(isinstance(r,str) and 'Original retry conflict' in r for r in results))
+        self.assertEqual(self.sql(f"SELECT count(*) FROM context_original_registrations WHERE owner_id='{self.owner}'").stdout.strip(),'1')
