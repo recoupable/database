@@ -35,3 +35,5 @@ Replaying the same organization/actor/key and normalized input returns the saved
 
 Research-to-roster isolation: see [RESEARCH-ROSTER.md](RESEARCH-ROSTER.md) for the
 real transaction suite, preserved evidence, explicit enrollment and deployment limits.
+
+Private original registration: see [ORIGINAL-REGISTRATION.md](ORIGINAL-REGISTRATION.md).
