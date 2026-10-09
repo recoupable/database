@@ -10,6 +10,9 @@ class OriginalFixture(fixture.ReleaseCases):
         path = fixture.ROOT / 'supabase/migrations/20261009210000_context_original_registration.sql'
         if path.exists():
             cls.sql(path.read_text())
+        forward = fixture.ROOT / 'supabase/migrations/20261009230000_context_original_neutral_path.sql'
+        if forward.exists():
+            cls.sql(forward.read_text())
 
     def setUp(self):
         self.actor, self.owner, self.other, self.source, self.object = [str(uuid.uuid4()) for _ in range(5)]
@@ -17,9 +20,9 @@ class OriginalFixture(fixture.ReleaseCases):
         self.sql(f"INSERT INTO accounts VALUES ('{self.actor}','Operator'),('{self.owner}','Label'),('{self.other}','Other');"
                  f"INSERT INTO account_organization_ids VALUES ('{self.actor}','{self.owner}',now());")
 
-    def register(self, key='fixture', digest='a'*64, path=None, actor=None, owner=None, source=None):
+    def register(self, key='fixture', digest='a'*64, path=None, actor=None, owner=None, source=None, media_type='text/csv'):
         sql = f"SET ROLE service_role; SELECT register_context_original('{self.actor if actor is None else actor}','{self.owner if owner is None else owner}'," \
-              f"'{self.source if source is None else source}','{key}','{self.path if path is None else path}','{digest}',26,'text/csv');"
+              f"'{self.source if source is None else source}','{key}','{self.path if path is None else path}','{digest}',26,'{media_type}');"
         return json.loads(self.sql(sql).stdout.strip().splitlines()[-1])
 
     def read(self, receipt, actor=None, owner=None):
