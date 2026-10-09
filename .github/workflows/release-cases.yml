@@ -30,3 +30,7 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 -m unittest discover -s tests -p 'test_release_cases.py'
+      - name: Test registered company baseline
+        run: |
+          export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
+          python3 -m unittest discover -s tests -p 'test_company_baseline.py'
