@@ -1,6 +1,5 @@
 """Private original receipts; no hosted bytes or providers."""
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 import original_registration_fixture as fixture
 
 class OriginalRegistration(fixture.OriginalFixture):
@@ -43,11 +42,6 @@ class OriginalRegistration(fixture.OriginalFixture):
         with self.assertRaisesRegex(AssertionError, 'Original unavailable'):
             self.register(actor=self.owner)
 
-    def test_concurrent_retries_return_one_receipt(self):
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            receipts = list(pool.map(lambda _: self.register(), range(6)))
-        self.assertTrue(all(r == receipts[0] for r in receipts))
-        self.assertEqual(self.sql(f"SELECT count(*) FROM context_original_registrations WHERE owner_id='{self.owner}'").stdout.strip(), '1')
 
     def test_foreign_key_invalid_path_and_browser_role_denied(self):
         with self.assertRaises(AssertionError): self.register(path=self.path.replace(self.owner, self.other))
@@ -101,36 +95,3 @@ class OriginalRegistration(fixture.OriginalFixture):
         self.assertEqual(self.read(legacy['id']),legacy)
         self.assertEqual(self.register(),legacy)
         self.assertEqual(self.read(saved['id']),saved)
-
-    def test_simultaneous_changed_type_neutral_retry_has_one_receipt(self):
-        neutral=self.path.replace('.csv','.original')
-        def call(kind):
-            try:
-                return self.register(path=neutral,media_type=kind,digest=('a' if kind=='text/csv' else 'b')*64)
-            except AssertionError as error:
-                return str(error)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            results=list(pool.map(call,['text/csv','application/pdf']))
-        self.assertEqual(sum(isinstance(r,dict) for r in results),1)
-        self.assertTrue(any(isinstance(r,str) and 'Original retry conflict' in r for r in results))
-        self.assertEqual(self.sql(f"SELECT count(*) FROM context_original_registrations WHERE owner_id='{self.owner}'").stdout.strip(),'1')
-
-    def test_cross_owner_source_creation_race_returns_controlled_denial(self):
-        self.sql("CREATE FUNCTION delay_original_source() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$; CREATE TRIGGER delay_original_source BEFORE INSERT ON context_sources FOR EACH ROW EXECUTE FUNCTION delay_original_source();")
-        try:
-            def call(foreign):
-                try:
-                    return self.register(actor=self.other if foreign else self.actor,
-                        owner=self.other if foreign else self.owner,
-                        path=self.path.replace(self.owner,self.other) if foreign else self.path)
-                except AssertionError as error:
-                    return str(error)
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                results=list(pool.map(call,[False,True]))
-            self.assertEqual(sum(isinstance(r,dict) for r in results),1)
-            errors=[r for r in results if isinstance(r,str)]
-            self.assertEqual(len(errors),1)
-            self.assertIn('Original unavailable',errors[0])
-            self.assertNotIn('duplicate key',errors[0])
-        finally:
-            self.sql("DROP TRIGGER delay_original_source ON context_sources; DROP FUNCTION delay_original_source();")

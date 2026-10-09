@@ -19,6 +19,9 @@ class OriginalFixture(fixture.ReleaseCases):
         source_lock = fixture.ROOT / 'supabase/migrations/20261009230200_context_original_source_lock.sql'
         if source_lock.exists():
             cls.sql(source_lock.read_text())
+        source_try_lock = fixture.ROOT / 'supabase/migrations/20261009230300_context_original_source_try_lock.sql'
+        if source_try_lock.exists():
+            cls.sql(source_try_lock.read_text())
 
     def setUp(self):
         self.actor, self.owner, self.other, self.source, self.object = [str(uuid.uuid4()) for _ in range(5)]
