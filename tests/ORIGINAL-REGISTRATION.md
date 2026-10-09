@@ -31,3 +31,8 @@ Before approved rollout audit current source/version schema, actor authorization
 lock/table prerequisites and normal migration integration. Verify service-only
 permissions and migration body afterward. No production rollout or actual
 customer registration is claimed by local/CI/preview results.
+
+The forward-only `20261009230100` migration adds a partial owner/storage-path
+index for retained object conflict probes. It excludes versions without objects.
+No constant-time lookup or production index performance is claimed. Earlier
+preview-applied original-registration and neutral-path migrations are unchanged.

@@ -13,6 +13,9 @@ class OriginalFixture(fixture.ReleaseCases):
         forward = fixture.ROOT / 'supabase/migrations/20261009230000_context_original_neutral_path.sql'
         if forward.exists():
             cls.sql(forward.read_text())
+        index = fixture.ROOT / 'supabase/migrations/20261009230100_context_original_storage_lookup_index.sql'
+        if index.exists():
+            cls.sql(index.read_text())
 
     def setUp(self):
         self.actor, self.owner, self.other, self.source, self.object = [str(uuid.uuid4()) for _ in range(5)]
