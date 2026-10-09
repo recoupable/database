@@ -34,3 +34,8 @@ customer registration is claimed by local/CI/preview results.
 
 The separately reviewed [internal retrieval lookup](./ORIGINAL-RETRIEVAL.md)
 reuses the receipt authority without exposing paths in ordinary receipt reads.
+
+The forward-only `20261009230100` migration adds a partial owner/storage-path
+index for retained object conflict probes. It excludes versions without objects.
+No constant-time lookup or production index performance is claimed. Earlier
+preview-applied original-registration and neutral-path migrations are unchanged.
