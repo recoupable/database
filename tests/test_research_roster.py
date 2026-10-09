@@ -19,8 +19,9 @@ class ResearchRoster(fixture.ResearchFixture):
         owner, request = self.research()
         self.commit(owner, request)
         self.assertEqual(self.sql('SELECT count(*) FROM account_artist_ids'), '1')
+        self.assertEqual(self.sql(f"SELECT count(*) FROM account_artist_ids WHERE account_id='{fixture.onboarding.ACTOR}' AND artist_id='{artist}'"), '1')
         self.assertEqual(self.sql('SELECT count(*) FROM artist_organization_ids'), '1')
-        self.assertEqual(self.sql('SELECT artist_id FROM artist_organization_ids'), artist)
+        self.assertEqual(self.sql(f"SELECT count(*) FROM artist_organization_ids WHERE organization_id='{fixture.onboarding.ORG}' AND artist_id='{artist}'"), '1')
         self.assertEqual(self.sql("SELECT count(*) FROM context_resource_links WHERE relation='credited_artist'"), '2')
 
     def test_ready_guest_adoption_does_not_enroll(self):
