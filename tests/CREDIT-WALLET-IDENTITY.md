@@ -30,8 +30,10 @@ constraint, closing the race with writers. Existing duplicates cause installatio
 to fail; no automatic deduplication, summed balances or row deletion is permitted.
 Resolve any failure through separately reviewed evidence and a specific decision.
 
-The migration takes a table lock to build a normal unique index. A five-second
-lock timeout and thirty-second statement timeout bound the wait/work. The reviewed
+The migration takes an ACCESS EXCLUSIVE table lock to build a normal unique
+index. It blocks reads (including balance queries) as well as writes while held;
+a queued lock can also delay later queries. A five-second lock timeout and
+thirty-second statement timeout bound the wait/work. The reviewed
 production table was approximately 392 KiB on October 9 UTC, so an ordinary
 transactional constraint is appropriate; recheck size and workload before rollout.
 On timeout the transaction rolls back: do not assume the constraint exists or

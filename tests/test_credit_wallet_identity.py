@@ -11,8 +11,7 @@ class CreditWalletIdentity(CreditChargeFixture):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        if MIGRATION.exists():
-            cls.sql(MIGRATION.read_text())
+        cls.sql(MIGRATION.read_text())
 
     def setUp(self):
         self.owner = str(uuid.uuid4())
@@ -73,8 +72,7 @@ class CreditWalletMigration(CreditChargeFixture):
         owner = str(uuid.uuid4())
         self.sql(f"INSERT INTO credits_usage(account_id,remaining_credits) VALUES ('{owner}',700),('{owner}',300)")
         before = self.sql('SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM credits_usage c').stdout
-        # Until the migration exists, this represents the unchanged legacy schema.
-        migration = MIGRATION.read_text() if MIGRATION.exists() else 'SELECT 1;'
+        migration = MIGRATION.read_text()
         result = self.sql(migration, succeeds=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('credits_usage_account_id_key', result.stderr)
@@ -87,7 +85,7 @@ class CreditWalletMigrationPreservation(CreditChargeFixture):
         owners = [str(uuid.uuid4()) for _ in range(3)]
         self.sql(f"INSERT INTO credits_usage(account_id,remaining_credits) VALUES ('{owners[0]}',700),('{owners[1]}',-20),('{owners[2]}',0),(NULL,10),(NULL,20)")
         before = self.sql('SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM credits_usage c').stdout
-        migration = MIGRATION.read_text() if MIGRATION.exists() else 'SELECT 1;'
+        migration = MIGRATION.read_text()
         self.sql(migration)
         self.assertEqual(self.sql('SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM credits_usage c').stdout, before)
         self.assertEqual(self.sql("SELECT count(*) FROM pg_constraint WHERE conname='credits_usage_account_id_key' AND contype='u'").stdout.strip(), '1')
