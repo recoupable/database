@@ -35,10 +35,10 @@ class ManifestAccess(fixture.ManifestFixture):
         self.sql(f"UPDATE context_source_versions SET removed_at=now() WHERE id='{version}'")
         self.assertEqual(len(self.list_manifest()['versions']), 1)
 
-    def test_reads_do_not_change_evidence_and_helper_is_not_browser_callable(self):
+    def test_reads_do_not_change_evidence_and_unbounded_helper_is_denied(self):
         count = self.sql(f"SELECT count(*) FROM context_results WHERE owner_id='{self.owner}'").stdout.strip()
         self.list_manifest()
         self.assertEqual(self.sql(f"SELECT count(*) FROM context_results WHERE owner_id='{self.owner}'").stdout.strip(), count)
-        for role in ['anon', 'authenticated']:
+        for role in ['anon', 'authenticated', 'service_role']:
             with self.assertRaisesRegex(AssertionError, 'permission denied'):
                 self.sql(f"SET ROLE {role}; SELECT * FROM context_request_evidence_versions('{self.owner}','{self.request}');")

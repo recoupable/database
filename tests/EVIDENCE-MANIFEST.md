@@ -23,5 +23,8 @@ query snapshot; successive pages are not a frozen export or an authorization gra
 The two manifest test classes define 12 cases. Each also runs the inherited
 `test_review_lifecycle_and_access` from `ReleaseCases`, yielding 14 executions.
 CI runs PostgreSQL 15 and 16. Local validation also covers PostgreSQL 17.
+Forward migration `20261009200001` inlines the retained-version query in the
+bounded wrapper and revokes the unbounded helper from `service_role`. Browser
+roles remain denied; the original preview-applied migration is unchanged.
 The API must supply the authenticated actor and validate returned scope/metadata.
 Release requires explicit approval and production migration/permission verification.
