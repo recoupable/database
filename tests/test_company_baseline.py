@@ -61,6 +61,7 @@ class CompanyBaseline(release_fixture.ReleaseCases):
           ('{self.org}','{source}',repeat('a',64),'{{"secret":"raw document"}}',NULL),
           ('{self.org}','{source}',repeat('b',64),'{{}}',now());""")
         data = self.baseline()
+        self.assertEqual([item['source_id'] for item in data['sources']['items']], [source])
         self.assertEqual(data['sources']['items'][0]['retained_version_count'], 1)
         self.assertNotIn('raw document', json.dumps(data))
         self.assertNotIn('private.example', json.dumps(data))
@@ -99,3 +100,25 @@ class CompanyBaseline(release_fixture.ReleaseCases):
         self.assertIsNone(second['professionals']['next_id'])
         self.assertIsNone(second['sources']['next_id'])
         self.assertEqual(len({p['professional_id'] for p in first['professionals']['items']+second['professionals']['items']}),51)
+        self.assertEqual(len({p['source_id'] for p in first['sources']['items']+second['sources']['items']}),51)
+
+    def test_rejects_foreign_missing_and_wrong_section_cursors(self):
+        artist, professional, source = [str(uuid.uuid4()) for _ in range(3)]
+        self.sql(f"""INSERT INTO artist_organization_ids(id,artist_id,organization_id)
+          VALUES ('{artist}','{self.actor}','{self.other}');
+          INSERT INTO organization_professionals(id,organization_id,name,roles,confirmed_by)
+          VALUES ('{professional}','{self.other}','Other person',ARRAY['producer'],'{self.other}');
+          INSERT INTO context_sources(id,owner_id,kind) VALUES ('{source}','{self.other}','customer');""")
+        for index, cursor in enumerate([artist, professional, source]):
+            for value in [cursor, 'ffffffff-ffff-4fff-bfff-ffffffffffff']:
+                cursors = ['NULL', 'NULL', 'NULL']
+                cursors[index] = f"'{value}'"
+                with self.assertRaisesRegex(AssertionError, 'Invalid baseline cursor'):
+                    self.baseline(cursors=','.join(cursors))
+        self.sql(f"INSERT INTO context_sources(id,owner_id,kind) VALUES (gen_random_uuid(),'{self.org}','customer')")
+        own_source = self.baseline()['sources']['items'][0]['source_id']
+        with self.assertRaisesRegex(AssertionError, 'Invalid baseline cursor'):
+            self.baseline(cursors=f"'{own_source}',NULL,NULL")
+        self.sql(f"UPDATE context_sources SET withdrawn_at=now() WHERE id='{own_source}'")
+        with self.assertRaisesRegex(AssertionError, 'Invalid baseline cursor'):
+            self.baseline(cursors=f"NULL,NULL,'{own_source}'")

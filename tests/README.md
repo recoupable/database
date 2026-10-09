@@ -34,7 +34,7 @@ Replaying the same organization/actor/key and normalized input returns the saved
 
 ## Registered company baseline
 
-Run `python3 -m unittest discover -s tests -p 'test_company_baseline.py'` with one PostgreSQL installation on PATH. Seven tests cover existing roster IDs, separate same-name professionals, withdrawn/removed source exclusion, member revocation, client-role denial and independent 50-row pagination for all three sections, plus the existing release-review lifecycle. They use synthetic local data, a minimal legacy table fixture and actual Context/professional migrations; this is not a complete production schema replay.
+Run `python3 -m unittest discover -s tests -p 'test_company_baseline.py'` with one PostgreSQL installation on PATH. Eight tests cover existing roster IDs, separate same-name professionals, withdrawn/removed source exclusion, member revocation, client-role denial invalid/foreign/wrong-section/withdrawn cursor rejection and independent 50-row pagination for all three sections, plus the existing release-review lifecycle. They use synthetic local data, a minimal legacy table fixture and actual Context/professional migrations; this is not a complete production schema replay.
 
 `20261009160000_context_company_baseline.sql` adds only a service-role invoker read function using the existing owner/member authorization helper and table grants. It depends on the deployed professional roster and release-case migrations, not the pending wallet uniqueness change. Apply through the normal database release before deploying its API consumer; verify function signature, body and privileges in the target. No production mutation or paid collection is part of this feature.
 

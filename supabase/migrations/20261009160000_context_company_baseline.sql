@@ -13,6 +13,16 @@ BEGIN
  SELECT name INTO org_name FROM public.accounts WHERE id=p_org;
  IF NOT FOUND THEN RAISE EXCEPTION 'Case access denied' USING ERRCODE='42501'; END IF;
 
+ -- Reject markers from another scope/section or records no longer readable.
+ -- Return one generic error, never disclose foreign record existence.
+ IF (p_after_artist IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM public.artist_organization_ids WHERE organization_id=p_org AND id=p_after_artist))
+ OR (p_after_professional IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM public.organization_professionals WHERE organization_id=p_org AND id=p_after_professional))
+ OR (p_after_source IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM public.context_sources WHERE owner_id=p_org AND id=p_after_source AND withdrawn_at IS NULL))
+ THEN RAISE EXCEPTION 'Invalid baseline cursor' USING ERRCODE='22023'; END IF;
+
  SELECT coalesce(jsonb_agg(jsonb_build_object('relationship_id',r.id,'artist_id',r.artist_id,
    'name',a.name) ORDER BY r.id),'[]'::jsonb) INTO artists
  FROM (SELECT id,artist_id FROM public.artist_organization_ids WHERE organization_id=p_org
