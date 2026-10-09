@@ -18,20 +18,20 @@ class ManifestFixture(fixture.ReleaseCases):
         self.actor, self.owner, self.other = [str(uuid.uuid4()) for _ in range(3)]
         self.sql(f"INSERT INTO accounts VALUES ('{self.actor}','Operator'),('{self.owner}','Label'),('{self.other}','Other');"
                  f"INSERT INTO account_organization_ids VALUES ('{self.actor}','{self.owner}',now());")
-        saved = self.json(f"SET ROLE service_role; SELECT create_context_release_request('{self.owner}',"
+        saved = self.run_json_query(f"SET ROLE service_role; SELECT create_context_release_request('{self.owner}',"
                           f"'{self.actor}','1234567890123456789012','fixture');")
         self.request = saved['id']
         self.subject = saved['output']['subjectIds'][0]
 
-    def json(self, sql):
+    def run_json_query(self, sql):
         return json.loads(self.sql(sql).stdout.strip().splitlines()[-1])
 
-    def manifest(self, actor=None, owner=None, request=None, after=None):
+    def list_manifest(self, actor=None, owner=None, request=None, after=None):
         cursor = f"'{after}'" if after else 'null'
-        return self.json(f"SET ROLE service_role; SELECT list_context_request_evidence_versions("
+        return self.run_json_query(f"SET ROLE service_role; SELECT list_context_request_evidence_versions("
                          f"'{actor or self.actor}','{owner or self.owner}','{request or self.request}',{cursor});")
 
-    def metadata(self, value, topic='fixture', url=None):
+    def save_metadata(self, value, topic='fixture', url=None):
         url = url or f'urn:fixture:{self.request}'
         self.sql(f"SET ROLE service_role; SELECT save_context_metadata('{self.owner}','{self.request}',"
                  f"'{self.subject}','{topic}','{url}','{{\"value\":{value}}}',now());")
