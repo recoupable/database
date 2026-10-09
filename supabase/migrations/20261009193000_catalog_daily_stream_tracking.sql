@@ -69,10 +69,21 @@ begin
       (select (v->>'streams')::bigint from jsonb_array_elements(p_result->'days') v where v->>'date'=d::date::text),
       p_result->>'provider_recording_id',p_result->>'source_hash',(p_result->>'retrieved_at')::timestamptz
     from generate_series(r.since::timestamp,r.until::timestamp,interval '1 day') d
+    where not exists (
+      select 1 from (
+        select streams,provider_recording_id from public.catalog_stream_observations
+        where catalog_id=r.catalog_id and isrc=p_isrc and date=d::date
+        order by retrieved_at desc,run_id desc limit 1
+      ) prior where prior.provider_recording_id=p_result->>'provider_recording_id'
+        and prior.streams is not distinct from
+          (select (v->>'streams')::bigint from jsonb_array_elements(p_result->'days') v where v->>'date'=d::date::text)
+    )
     on conflict (run_id,isrc,date) do nothing;
   end if;
   update public.catalog_stream_runs set status='running', coverage=coverage || jsonb_build_object(p_isrc,
-    jsonb_build_object('state',p_result->>'state','observed_days',coalesce(jsonb_array_length(p_result->'days'),0))) where id=r.id;
+    jsonb_build_object('state',p_result->>'state','observed_days',coalesce(jsonb_array_length(p_result->'days'),0),
+      'retrieved_at',p_result->>'retrieved_at','source_hash',p_result->>'source_hash',
+      'provider_recording_id',p_result->>'provider_recording_id')) where id=r.id;
   return true;
 end $$;
 revoke all on function public.claim_catalog_stream_run(uuid,date), public.commit_catalog_stream_track(uuid,text,jsonb) from public, anon, authenticated;
