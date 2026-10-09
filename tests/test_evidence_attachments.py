@@ -9,6 +9,7 @@ MIGRATION = ROOT / 'supabase/migrations/20261009180000_context_evidence_attachme
 
 
 class EvidenceAttachments(fixture.ReleaseCases):
+    preview_history = False
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -20,7 +21,19 @@ class EvidenceAttachments(fixture.ReleaseCases):
           GRANT SELECT ON artist_organization_ids TO service_role;
           GRANT SELECT ON accounts TO service_role;''')
         cls.sql((ROOT / 'supabase/migrations/20261008050000_professional_roster.sql').read_text())
-        for migration in sorted((ROOT / 'supabase/migrations').glob('2026100918000*_context_evidence_*.sql')):
+        migrations = sorted((ROOT / 'supabase/migrations').glob('2026100918000*_context_evidence_*.sql'))
+        if cls.preview_history:
+            original = MIGRATION.read_text()
+            cls.sql(original)
+            cls.preview_actor, cls.preview_professional, cls.preview_source, cls.preview_version = [str(uuid.uuid4()) for _ in range(4)]
+            cls.sql(f"""INSERT INTO accounts VALUES ('{cls.preview_actor}','Historical fixture');
+              INSERT INTO organization_professionals(id,organization_id,name,roles,confirmed_by)
+              VALUES ('{cls.preview_professional}','{cls.preview_actor}','Historical fixture',ARRAY['songwriter'],'{cls.preview_actor}');
+              INSERT INTO context_sources(id,owner_id,kind) VALUES ('{cls.preview_source}','{cls.preview_actor}','customer');
+              INSERT INTO context_source_versions(id,owner_id,source_id,fingerprint) VALUES ('{cls.preview_version}','{cls.preview_actor}','{cls.preview_source}',repeat('a',64));""")
+            cls.preview_receipt = json.loads(cls.sql(f"SET ROLE service_role; SELECT attach_context_evidence('{cls.preview_actor}','{cls.preview_actor}','{cls.preview_version}','historical-fixture','[{{\"professional_id\":\"{cls.preview_professional}\"}}]')").stdout.strip().splitlines()[-1])
+            migrations = migrations[1:]
+        for migration in migrations:
             cls.sql(migration.read_text())
 
     def setUp(self):
@@ -213,3 +226,13 @@ class EvidenceAttachments(fixture.ReleaseCases):
     def test_receipt_cannot_commit_with_unfilled_target_slots(self):
         with self.assertRaisesRegex(AssertionError, 'Evidence receipt target count'):
             self.sql(f"SET ROLE service_role; INSERT INTO context_evidence_attachments(owner_id,actor_id,source_version_id,idempotency_key,fingerprint,target_count) VALUES ('{self.owner}','{self.actor}','{self.version}','incomplete',repeat('a',64),2)")
+
+
+class PreviewHistoryAttachments(EvidenceAttachments):
+    preview_history = True
+
+    def test_forward_upgrade_preserves_existing_receipt_and_exact_replay(self):
+        saved = self.json_sql(f"SELECT read_context_evidence_attachment('{self.preview_actor}','{self.preview_actor}','{self.preview_receipt['id']}')")
+        self.assertEqual(saved, self.preview_receipt)
+        replay = self.json_sql(f"SELECT attach_context_evidence('{self.preview_actor}','{self.preview_actor}','{self.preview_version}','historical-fixture','[{{\"professional_id\":\"{self.preview_professional}\"}}]')")
+        self.assertEqual(replay, saved)

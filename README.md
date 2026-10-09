@@ -1,5 +1,25 @@
 # Recoup Supabase
 
+Evidence associations in Database #90 retain the initial `20261009180000`
+migration after its first hosted preview application. Corrections use the ordered
+`20261009180001`–`20261009180004` migrations. The receipt seal verifies the original
+fingerprint before fixing the target count; inconsistent existing receipts abort
+for review rather than being reinterpreted. It adds a column lock privilege for
+the service role and enforces complete, fixed target slots. Later migrations
+replace the authorization/read/write/list functions without rewriting receipt
+payloads or IDs. The original long migration and its bounded uniqueness scan
+remain historical; later corrections are split by responsibility.
+
+Local tests exercise both clean installation and a synthetic already-applied
+preview with an existing receipt. All 31 test executions pass on PostgreSQL15/17,
+including exact receipt/replay preservation. This is not hosted preview or
+production verification. The preview failure after the attempted split was
+reproduced locally as a duplicate-function collision; actual hosted error logs
+were unavailable in that batch. Require final-head preview/checks and explicit
+approval before release, then verify production migration bodies/permissions and
+supported authenticated HTTP/MCP readback. No preview reset or hosted mutation
+was used to prepare these fixes.
+
 Supabase migration scripts for the Recoup project.
 
 ## Release metadata review migration
