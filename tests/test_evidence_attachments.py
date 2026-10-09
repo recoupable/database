@@ -15,11 +15,13 @@ class EvidenceAttachments(fixture.ReleaseCases):
         cls.sql('''CREATE TABLE account_artist_ids(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
           account_id uuid REFERENCES accounts(id),artist_id uuid REFERENCES accounts(id));
           CREATE TABLE artist_organization_ids(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-          organization_id uuid REFERENCES accounts(id),artist_id uuid REFERENCES accounts(id));
-          GRANT SELECT,UPDATE ON account_artist_ids,artist_organization_ids TO service_role;
+          organization_id uuid REFERENCES accounts(id),artist_id uuid REFERENCES accounts(id),updated_at timestamptz DEFAULT now());
+          GRANT SELECT,UPDATE ON account_artist_ids TO service_role;
+          GRANT SELECT ON artist_organization_ids TO service_role;
           GRANT SELECT ON accounts TO service_role;''')
         cls.sql((ROOT / 'supabase/migrations/20261008050000_professional_roster.sql').read_text())
-        cls.sql(MIGRATION.read_text())
+        for migration in sorted((ROOT / 'supabase/migrations').glob('2026100918000*_context_evidence_*.sql')):
+            cls.sql(migration.read_text())
 
     def setUp(self):
         (self.actor, self.owner, self.foreign, self.artist, self.professional,
@@ -160,7 +162,7 @@ class EvidenceAttachments(fixture.ReleaseCases):
         # Composite owner FK also rejects direct cross-owner associations.
         receipt = self.attach(targets=[self.targets[0]])
         with self.assertRaisesRegex(AssertionError, 'foreign key constraint'):
-            self.sql(f"INSERT INTO context_evidence_attachment_targets(attachment_id,owner_id,position,professional_id) VALUES ('{receipt['id']}','{self.owner}',1,'{professional}')")
+            self.sql(f"BEGIN; INSERT INTO context_evidence_attachments(id,owner_id,actor_id,source_version_id,idempotency_key,fingerprint,target_count) VALUES ('{uuid.uuid4()}','{self.owner}','{self.actor}','{self.version}','foreign-fk',repeat('a',64),1) RETURNING id \\gset\nINSERT INTO context_evidence_attachment_targets(attachment_id,owner_id,position,professional_id) VALUES (:'id','{self.owner}',0,'{professional}'); COMMIT;")
 
     def test_withdrawn_target_lineage_is_not_accessible_even_with_owned_request(self):
         receipt = self.attach(targets=[self.targets[2]])
@@ -201,3 +203,13 @@ class EvidenceAttachments(fixture.ReleaseCases):
                 with self.assertRaisesRegex(AssertionError, 'permission denied'):
                     self.sql(f'SET ROLE service_role; {statement}')
         self.assertEqual(self.read(receipt)['id'], receipt['id'])
+
+    def test_targets_cannot_be_appended_after_receipt_creation(self):
+        receipt = self.attach(targets=[self.targets[1]])
+        with self.assertRaisesRegex(AssertionError, 'Evidence receipt target count'):
+            self.sql(f"SET ROLE service_role; INSERT INTO context_evidence_attachment_targets(attachment_id,owner_id,position,artist_id) VALUES ('{receipt['id']}','{self.owner}',1,'{self.artist}')")
+        self.assertEqual(self.read(receipt)['targets'], [self.targets[1]])
+
+    def test_receipt_cannot_commit_with_unfilled_target_slots(self):
+        with self.assertRaisesRegex(AssertionError, 'Evidence receipt target count'):
+            self.sql(f"SET ROLE service_role; INSERT INTO context_evidence_attachments(owner_id,actor_id,source_version_id,idempotency_key,fingerprint,target_count) VALUES ('{self.owner}','{self.actor}','{self.version}','incomplete',repeat('a',64),2)")
