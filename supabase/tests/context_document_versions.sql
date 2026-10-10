@@ -115,11 +115,13 @@ begin
   raise exception 'TEST_FAILURE: history row deleted';
  exception when others then if SQLERRM like 'TEST_FAILURE:%' then raise; end if; end;
  begin
-  insert into public.context_document_versions(owner_id,document_id,revision,result_id,change) values(owner,doc,2,second_result,'accepted');
+  insert into public.context_document_versions(owner_id,subject_id,topic,document_id,revision,result_id,change)
+  values(owner,subject,'release_metadata',doc,2,second_result,'accepted');
   raise exception 'TEST_FAILURE: duplicate revision inserted';
  exception when unique_violation then null; end;
  begin
-  insert into public.context_document_versions(owner_id,document_id,revision,result_id,change) values(outsider,doc,9,second_result,'accepted');
+  insert into public.context_document_versions(owner_id,subject_id,topic,document_id,revision,result_id,change)
+  values(outsider,subject,'release_metadata',doc,9,second_result,'accepted');
   raise exception 'TEST_FAILURE: history cited another workspace';
  exception when foreign_key_violation then null; end;
  if (select count(*) from public.context_document_versions where document_id=doc)<>3 then raise exception 'Rejected writes changed history'; end if;
@@ -137,15 +139,24 @@ begin
   or history->'document'->>'current_result_id'<>history->'versions'->0->>'result_id'
  then raise exception 'Service role lineage mismatch: %',history; end if;
  if public.read_context_document_history(outsider,doc) is not null then raise exception 'Service role leaked another workspace'; end if;
+ begin
+  insert into public.context_document_versions(owner_id,subject_id,topic,document_id,revision,result_id,change)
+  values(owner,subject,'release_metadata',doc,5,null,'cleared');
+  raise exception 'TEST_FAILURE: service role wrote history directly';
+ exception when insufficient_privilege then null; end;
  reset role;
 
  if pg_catalog.has_function_privilege('authenticated','public.read_context_document_history(uuid,uuid,bigint,integer)','EXECUTE')
   or pg_catalog.has_function_privilege('anon','public.read_context_document_history(uuid,uuid,bigint,integer)','EXECUTE')
+  or pg_catalog.has_table_privilege('service_role','public.context_document_versions','INSERT')
   or pg_catalog.has_table_privilege('service_role','public.context_document_versions','UPDATE')
   or pg_catalog.has_table_privilege('service_role','public.context_document_versions','DELETE')
   or pg_catalog.has_table_privilege('authenticated','public.context_document_versions','SELECT')
   or pg_catalog.has_table_privilege('anon','public.context_document_versions','SELECT')
  then raise exception 'Document history privileges are too broad'; end if;
- raise notice 'PASS: accepted/cleared revisions recorded, current pointer kept, superseded brief resolvable, immutable history, scoped reads, service-role path';
+ if not (select prosecdef from pg_catalog.pg_proc where oid='public.record_context_document_version()'::regprocedure)
+  or (select prosecdef from pg_catalog.pg_proc where oid='public.read_context_document_history(uuid,uuid,bigint,integer)'::regprocedure)
+ then raise exception 'Only the recording trigger may write history as its owner'; end if;
+ raise notice 'PASS: accepted/cleared revisions recorded, current pointer kept, superseded brief resolvable, immutable history, scoped reads, service-role read-only path';
 end $$;
 rollback;

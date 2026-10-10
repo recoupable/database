@@ -4,32 +4,56 @@
 -- once in context_document_versions by a trigger. accept_context_result,
 -- withdraw_context_source, save_context_metadata, enrichment completion and the
 -- entry functions therefore record history without any change to their bodies.
+-- The trigger is the only writer: it runs as the migration owner, and the service
+-- role can read history but cannot insert, update or delete it. Each version
+-- carries the document's subject and topic, so it can cite only a result of the
+-- same workspace, subject and topic.
 -- Existing documents are backfilled from their current revision; a fresh document
 -- (revision 0, no result) has no version yet and gets no row.
 --
--- Rollback keeps customer documents, results, sources and briefs untouched:
+-- Merge gate: production apply waits for the CE01 deployed-schema verification
+-- (recoupable/app#2117); the added context_documents key and the revision guard
+-- assume every deployed writer matches these migrations.
+--
+-- Disable (first-line rollback; keeps every recorded version and the read):
+--   alter table public.context_documents disable trigger context_documents_record_version;
+-- Writers keep working unchanged; revisions made while disabled are not recorded.
+-- Re-enable, then record the current revision of documents that moved meanwhile
+-- (the skipped intermediate revisions stay visibly absent):
+--   alter table public.context_documents enable trigger context_documents_record_version;
+--   insert into public.context_document_versions(owner_id, subject_id, topic, document_id, revision, result_id, change, backfilled, recorded_at)
+--   select d.owner_id, d.subject_id, d.topic, d.id, d.revision, d.current_result_id,
+--    case when d.current_result_id is null then 'cleared' else 'accepted' end, true, d.updated_at
+--   from public.context_documents d where d.current_result_id is not null or d.revision > 0
+--   on conflict (document_id, revision) do nothing;
+-- Full removal drops recorded history that cannot be rebuilt (re-applying this
+-- migration backfills only current revisions). Use it only for a deployment whose
+-- history was never relied on; customer documents, results, sources and briefs
+-- stay untouched either way:
 --   drop trigger context_documents_record_version on public.context_documents;
 --   drop trigger context_document_versions_immutable on public.context_document_versions;
 --   drop function public.record_context_document_version();
 --   drop function public.reject_context_document_version_change();
 --   drop function public.read_context_document_history(uuid,uuid,bigint,integer);
 --   drop table public.context_document_versions;
--- The unique(id, owner_id) constraint on context_documents may remain; re-running
--- this migration skips it when present and re-backfills history from current rows.
+-- The context_documents_lineage_key constraint may remain; re-running this
+-- migration skips it when present.
 begin;
 set local lock_timeout='5s';
 set local statement_timeout='60s';
 
 do $$ begin
  if not exists(select 1 from pg_catalog.pg_constraint
-  where conname='context_documents_id_owner' and conrelid='public.context_documents'::regclass) then
-  alter table public.context_documents add constraint context_documents_id_owner unique(id, owner_id);
+  where conname='context_documents_lineage_key' and conrelid='public.context_documents'::regclass) then
+  alter table public.context_documents add constraint context_documents_lineage_key unique(id, owner_id, subject_id, topic);
  end if;
 end $$;
 
 create table public.context_document_versions (
  id uuid primary key default gen_random_uuid(),
  owner_id uuid not null,
+ subject_id uuid not null,
+ topic text not null,
  document_id uuid not null,
  revision bigint not null check (revision >= 0),
  result_id uuid,
@@ -38,8 +62,10 @@ create table public.context_document_versions (
  recorded_at timestamptz not null default now(),
  unique(document_id, revision),
  unique(id, owner_id),
- foreign key(document_id, owner_id) references public.context_documents(id, owner_id) on delete restrict,
- foreign key(result_id, owner_id) references public.context_results(id, owner_id) on delete restrict,
+ foreign key(document_id, owner_id, subject_id, topic)
+  references public.context_documents(id, owner_id, subject_id, topic) on delete restrict,
+ foreign key(result_id, owner_id, subject_id, topic)
+  references public.context_results(id, owner_id, subject_id, topic) on delete restrict,
  check ((change = 'cleared') = (result_id is null))
 );
 create index context_document_versions_document_idx
@@ -48,9 +74,9 @@ create index context_document_versions_result_idx
  on public.context_document_versions(result_id, owner_id);
 alter table public.context_document_versions enable row level security;
 revoke all on public.context_document_versions from public, anon, authenticated, service_role;
-grant select, insert on public.context_document_versions to service_role;
+grant select on public.context_document_versions to service_role;
 
--- History rows are never rewritten, even by service-role writers.
+-- History rows are never rewritten, even by the table owner.
 create function public.reject_context_document_version_change()
 returns trigger language plpgsql set search_path='' as $$
 begin
@@ -63,7 +89,7 @@ create trigger context_document_versions_immutable
 -- One history row per document revision. A pointer that moves without a new
 -- revision is a lineage bug and is rejected rather than silently overwritten.
 create function public.record_context_document_version()
-returns trigger language plpgsql set search_path='' as $$
+returns trigger language plpgsql security definer set search_path='' as $$
 begin
  if tg_op = 'UPDATE' then
   if new.revision = old.revision then
@@ -78,23 +104,22 @@ begin
  elsif new.revision = 0 and new.current_result_id is null then
   return null;
  end if;
- insert into public.context_document_versions(owner_id, document_id, revision, result_id, change)
- values (new.owner_id, new.id, new.revision, new.current_result_id,
+ insert into public.context_document_versions(owner_id, subject_id, topic, document_id, revision, result_id, change)
+ values (new.owner_id, new.subject_id, new.topic, new.id, new.revision, new.current_result_id,
   case when new.current_result_id is null then 'cleared' else 'accepted' end);
  return null;
 end $$;
 create trigger context_documents_record_version
  after insert or update of current_result_id, revision on public.context_documents
  for each row execute function public.record_context_document_version();
+-- Trigger functions are never called directly; firing them needs no grant.
 revoke all on function public.reject_context_document_version_change(), public.record_context_document_version()
- from public, anon, authenticated;
-grant execute on function public.reject_context_document_version_change(), public.record_context_document_version()
- to service_role;
+ from public, anon, authenticated, service_role;
 
 -- Existing data compatibility: the current revision of every existing document
 -- becomes its first recorded version, dated by the document's last update.
-insert into public.context_document_versions(owner_id, document_id, revision, result_id, change, backfilled, recorded_at)
-select d.owner_id, d.id, d.revision, d.current_result_id,
+insert into public.context_document_versions(owner_id, subject_id, topic, document_id, revision, result_id, change, backfilled, recorded_at)
+select d.owner_id, d.subject_id, d.topic, d.id, d.revision, d.current_result_id,
  case when d.current_result_id is null then 'cleared' else 'accepted' end, true, d.updated_at
 from public.context_documents d
 where d.current_result_id is not null or d.revision > 0;

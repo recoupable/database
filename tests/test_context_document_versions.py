@@ -1,4 +1,4 @@
-"""Document version history on disposable PostgreSQL: legacy backfill, lifecycle, rollback."""
+"""Document version history on disposable PostgreSQL: legacy backfill, lifecycle, forgery, disable, removal."""
 import test_release_cases as release_cases
 
 ROOT = release_cases.ROOT
@@ -42,8 +42,19 @@ insert into public.context_documents(id,owner_id,subject_id,topic,revision,curre
  ('{CLEARED_DOC}','{OWNER}','{SUBJECT}','lyrics',3,null,'2026-09-22T10:00:00Z');
 """
 
-# The documented rollback: history objects only; documents, results and sources stay.
-ROLLBACK = """
+# The documented first-line rollback: stop recording, keep every recorded version.
+DISABLE = "alter table public.context_documents disable trigger context_documents_record_version;"
+ENABLE = """
+alter table public.context_documents enable trigger context_documents_record_version;
+insert into public.context_document_versions(owner_id, subject_id, topic, document_id, revision, result_id, change, backfilled, recorded_at)
+select d.owner_id, d.subject_id, d.topic, d.id, d.revision, d.current_result_id,
+ case when d.current_result_id is null then 'cleared' else 'accepted' end, true, d.updated_at
+from public.context_documents d where d.current_result_id is not null or d.revision > 0
+on conflict (document_id, revision) do nothing;
+"""
+
+# The documented full removal: history objects only; documents, results and sources stay.
+REMOVE = """
 drop trigger context_documents_record_version on public.context_documents;
 drop trigger context_document_versions_immutable on public.context_document_versions;
 drop function public.record_context_document_version();
@@ -94,8 +105,74 @@ class ContextDocumentVersions(release_cases.ReleaseCases):
         result = self.sql(FIXTURE.read_text())
         self.assertIn('PASS:', result.stderr)
 
-    def test_rollback_keeps_customer_data_and_reapply_backfills(self):
-        self.sql(ROLLBACK)
+    def test_disable_keeps_history_and_reenable_records_current_revision(self):
+        migration = MIGRATION.read_text()
+        self.assertIn(DISABLE, migration)
+        for line in ENABLE.strip().splitlines():
+            self.assertIn(line, migration)
+        out = self.sql(f"""
+begin;
+{DISABLE}
+select 'withdrawn:'||public.withdraw_context_source('{OWNER}','{SOURCE}');
+select 'disabled:'||string_agg(revision||'/'||change,',' order by revision)
+ from public.context_document_versions where document_id='{ACCEPTED_DOC}';
+select 'read:'||(h->'document'->>'current_revision')||'/'||jsonb_array_length(h->'versions')
+ from public.read_context_document_history('{OWNER}','{ACCEPTED_DOC}') h;
+{ENABLE}
+select 'enabled:'||string_agg(revision||'/'||change||'/'||backfilled,',' order by revision)
+ from public.context_document_versions where document_id='{ACCEPTED_DOC}';
+select 'cleared:'||count(*) from public.context_document_versions where document_id='{CLEARED_DOC}';
+select 'trigger:'||tgenabled::text from pg_catalog.pg_trigger where tgname='context_documents_record_version';
+rollback;
+""").stdout.split()
+        marks = [line for line in out if ':' in line]
+        self.assertEqual(marks, ['withdrawn:true', 'disabled:2/accepted', 'read:3/1',
+                                 'enabled:2/accepted/true,3/cleared/true', 'cleared:1', 'trigger:O'])
+        self.assert_backfilled()
+
+    def test_history_cannot_be_forged_or_cross_topic_and_withdrawal_still_works(self):
+        result = self.sql(f"""
+begin;
+do $$ begin
+ set local role service_role;
+ begin
+  insert into public.context_document_versions(owner_id,subject_id,topic,document_id,revision,result_id,change)
+  values('{OWNER}','{SUBJECT}','release_metadata','{ACCEPTED_DOC}',3,null,'cleared');
+  raise exception 'TEST_FAILURE: service role forged a future revision';
+ exception when insufficient_privilege then null; end;
+ begin
+  insert into public.context_document_versions(owner_id,subject_id,topic,document_id,revision,result_id,change)
+  values('{OWNER}','{SUBJECT}','artist_research','{EMPTY_DOC}',1,'{RESULT}','accepted');
+  raise exception 'TEST_FAILURE: service role wrote history';
+ exception when insufficient_privilege then null; end;
+ reset role;
+ begin
+  insert into public.context_document_versions(owner_id,subject_id,topic,document_id,revision,result_id,change)
+  values('{OWNER}','{SUBJECT}','artist_research','{EMPTY_DOC}',1,'{RESULT}','accepted');
+  raise exception 'TEST_FAILURE: history cited a result of another topic';
+ exception when foreign_key_violation then null; end;
+ begin
+  insert into public.context_document_versions(owner_id,subject_id,topic,document_id,revision,result_id,change)
+  values('{OWNER}','{SUBJECT}','release_metadata','{EMPTY_DOC}',1,'{RESULT}','accepted');
+  raise exception 'TEST_FAILURE: history relabelled a document topic';
+ exception when foreign_key_violation then null; end;
+ set local role service_role;
+ if not public.withdraw_context_source('{OWNER}','{SOURCE}') then raise exception 'TEST_FAILURE: withdrawal failed'; end if;
+ reset role;
+ raise notice 'PASS: no forged history; withdrawal recorded';
+end $$;
+select 'history:'||string_agg(revision||'/'||change||'/'||backfilled,',' order by revision)
+ from public.context_document_versions where document_id='{ACCEPTED_DOC}';
+select 'empty:'||count(*) from public.context_document_versions where document_id='{EMPTY_DOC}';
+rollback;
+""")
+        self.assertIn('PASS:', result.stderr)
+        marks = [line for line in result.stdout.split() if line.startswith(('history:', 'empty:'))]
+        self.assertEqual(marks, ['history:2/accepted/true,3/cleared/false', 'empty:0'])
+        self.assert_backfilled()
+
+    def test_remove_keeps_customer_data_and_reapply_backfills(self):
+        self.sql(REMOVE)
         self.assertEqual(self.sql("select to_regclass('public.context_document_versions') is null").stdout.strip(), 't')
         self.assertEqual(self.sql(
             f"select count(*) from public.context_documents where owner_id='{OWNER}'").stdout.strip(), '3')
