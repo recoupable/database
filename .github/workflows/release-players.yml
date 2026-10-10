@@ -30,3 +30,4 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 -m unittest discover -s tests -p 'test_release_players.py'
+          python3 -m unittest discover -s tests -p 'test_player_org_fans.py'
