@@ -12,11 +12,12 @@ declare normalized jsonb; name_text text; goal_text text; audience_text text; st
  source uuid; source_version uuid; document public.context_documents; attempt_key uuid; result uuid;
  snapshot jsonb; snapshot_hash text;
 begin
- if jsonb_typeof(p_brief)<>'object' or exists(
+ -- Null-safe type checks: a missing brief, name, goal or link id must fail closed, not compare as NULL.
+ if jsonb_typeof(p_brief) is distinct from 'object' or exists(
   select 1 from jsonb_object_keys(p_brief) as field(key)
   where field.key not in ('name','goal','audience','start_date','end_date','channels','promoted'))
  then raise exception 'Invalid campaign brief'; end if;
- if jsonb_typeof(p_brief->'name')<>'string' or jsonb_typeof(p_brief->'goal')<>'string'
+ if jsonb_typeof(p_brief->'name') is distinct from 'string' or jsonb_typeof(p_brief->'goal') is distinct from 'string'
   or (p_brief ? 'audience' and jsonb_typeof(p_brief->'audience')<>'string')
   or (p_brief ? 'start_date' and jsonb_typeof(p_brief->'start_date')<>'string')
   or (p_brief ? 'end_date' and jsonb_typeof(p_brief->'end_date')<>'string')
@@ -42,7 +43,9 @@ begin
    channel_text:=channel#>>'{}';
    if channel_text ~ '[[:cntrl:]]' then raise exception 'Invalid campaign brief'; end if;
    channel_text:=pg_catalog.btrim(pg_catalog.regexp_replace(channel_text,'[[:space:]]+',' ','g'));
-   if length(channel_text) not between 2 and 60 or channel_text ~ '://' or channel_text ~* '^(www\.|file:|/|\\|~/)'
+   -- Rejects URLs, URI schemes (mailto:, spotify:, file:), drive letters and paths; "X" is a valid channel.
+   if length(channel_text) not between 1 and 60
+    or channel_text ~* '(://|^(www\.|/|\\|~/)|^[a-z][a-z0-9+.-]*:[^[:space:]])'
     or exists(select 1 from jsonb_array_elements_text(channels) as existing(name) where lower(existing.name)=lower(channel_text))
    then raise exception 'Invalid campaign brief'; end if;
    channels:=channels||to_jsonb(channel_text);
@@ -56,7 +59,7 @@ begin
   for link in select value from jsonb_array_elements(p_brief->'promoted') loop
    if jsonb_typeof(link)<>'object'
     or exists(select 1 from jsonb_object_keys(link) as field(key) where field.key not in ('request_id','subject_id'))
-    or jsonb_typeof(link->'request_id')<>'string' or jsonb_typeof(link->'subject_id')<>'string'
+    or jsonb_typeof(link->'request_id') is distinct from 'string' or jsonb_typeof(link->'subject_id') is distinct from 'string'
     or (link->>'request_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     or (link->>'subject_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     or exists(select 1 from jsonb_array_elements(promoted) as existing(entry)

@@ -37,11 +37,11 @@ begin
 
  linked:=jsonb_build_array(jsonb_build_object('request_id',saved_request,'subject_id',release_subject),
   jsonb_build_object('request_id',upper(saved_request::text),'subject_id',artist_subject));
- brief:=base||jsonb_build_object('channels',jsonb_build_array(' Short-form   video ','Radio','press'),'promoted',linked);
+ brief:=base||jsonb_build_object('channels',jsonb_build_array(' Short-form   video ','Radio','press','X'),'promoted',linked);
  req:=public.create_context_campaign_brief_request(owner,owner,brief,'campaign-links');
  if req->>'status'<>'partial' or req->'input'->>'identityConfirmed'<>'false'
   or req->'input'->'brief'->>'name'<>'Catalogue campaign'
-  or req->'input'->'brief'->'channels'<>'["Short-form video","Radio","press"]'::jsonb
+  or req->'input'->'brief'->'channels'<>'["Short-form video","Radio","press","X"]'::jsonb
  then raise exception 'Channels were not saved normalized'; end if;
  if jsonb_array_length(req->'input'->'brief'->'promoted')<>2
   or req->'input'->'brief'->'promoted'->0<>jsonb_build_object('request_id',saved_request,'subject_id',release_subject,
@@ -113,7 +113,15 @@ begin
   base||jsonb_build_object('promoted',(select jsonb_agg(jsonb_build_object('request_id',gen_random_uuid(),'subject_id',gen_random_uuid())) from generate_series(1,21))),
   base||'{"channels":"Radio"}'::jsonb,
   base||'{"channels":["Radio","radio"]}'::jsonb,
-  base||'{"channels":["X"]}'::jsonb,
+  base||'{"channels":["   "]}'::jsonb,
+  base||'{"channels":["mailto:team@example.com"]}'::jsonb,
+  base||'{"channels":["spotify:album:example"]}'::jsonb,
+  base||'{"channels":["C:\\plans\\brief.pdf"]}'::jsonb,
+  base-'name',
+  base-'goal',
+  base||'{"name":null}'::jsonb,
+  base||jsonb_build_object('promoted',jsonb_build_array(jsonb_build_object('subject_id',release_subject))),
+  base||jsonb_build_object('promoted',jsonb_build_array(jsonb_build_object('request_id',saved_request))),
   base||'{"channels":[1]}'::jsonb,
   base||'{"channels":["https://example.com/channel"]}'::jsonb,
   base||'{"channels":["www.example.com"]}'::jsonb,
@@ -128,6 +136,13 @@ begin
    if SQLERRM like 'TEST_FAILURE:%' or SQLERRM<>'Invalid campaign brief' then raise; end if;
   end;
  end loop;
+ -- A missing brief fails closed instead of saving null fields.
+ begin
+  perform public.create_context_campaign_brief_request(owner,owner,null,'missing-brief');
+  raise exception 'TEST_FAILURE: missing brief accepted';
+ exception when others then
+  if SQLERRM like 'TEST_FAILURE:%' or SQLERRM<>'Invalid campaign brief' then raise; end if;
+ end;
  if (select count(*) from public.context_requests where owner_id=owner)<>requests_before
   or (select count(*) from public.context_resources where resource_kind='campaign_input')<>resources_before
  then raise exception 'Rejected brief left partial rows behind'; end if;
