@@ -105,7 +105,7 @@ create function public.create_context_planned_release_request(
  p_owner uuid,p_actor uuid,p_release jsonb,p_key text
 ) returns jsonb language plpgsql set search_path='' as $$
 declare title_text text; lifecycle text; date_text text; item jsonb; label_text text; url_text text;
- recording_id uuid; slot integer:=0; products jsonb:='[]'; links jsonb:='[]'; recordings jsonb:='[]'; tracklist jsonb:='[]';
+ recording_id uuid; slot integer; products jsonb:='[]'; links jsonb:='[]'; recordings jsonb:='[]'; tracklist jsonb:='[]';
  normalized jsonb; input_hash text; opaque text; uri text; resource uuid; subject uuid; req public.context_requests;
  source uuid; source_version uuid; document public.context_documents; attempt_key uuid; result uuid;
  snapshot jsonb; snapshot_hash text;
@@ -115,7 +115,8 @@ begin
  if exists(select 1 from jsonb_object_keys(p_release) as field(key)
   where field.key not in ('title','lifecycle_state','planned_release_date','products','promotional_links','recording_subject_ids'))
  then raise exception 'Invalid planned release'; end if;
- if jsonb_typeof(p_release->'title') is distinct from 'string' or jsonb_typeof(p_release->'lifecycle_state') is distinct from 'string'
+ if jsonb_typeof(p_release->'title') is distinct from 'string'
+  or (p_release ? 'lifecycle_state' and jsonb_typeof(p_release->'lifecycle_state')<>'string')
   or (p_release ? 'planned_release_date' and jsonb_typeof(p_release->'planned_release_date')<>'string')
   or (p_release ? 'products' and jsonb_typeof(p_release->'products')<>'array')
   or (p_release ? 'promotional_links' and jsonb_typeof(p_release->'promotional_links')<>'array')
@@ -125,8 +126,8 @@ begin
  if title_text ~ '[[:cntrl:]]' then raise exception 'Invalid planned release'; end if;
  title_text:=pg_catalog.btrim(pg_catalog.regexp_replace(title_text,'[[:space:]]+',' ','g'));
  if length(title_text) not between 2 and 200 then raise exception 'Invalid planned release'; end if;
- lifecycle:=p_release->>'lifecycle_state';
- if lifecycle not in ('planned','scheduled','announced','delivered','released_unverified')
+ lifecycle:=coalesce(p_release->>'lifecycle_state','unknown');
+ if lifecycle not in ('unknown','planned','scheduled','announced','delivered','released_unverified')
  then raise exception 'Invalid planned release'; end if;
  date_text:=p_release->>'planned_release_date';
  if date_text is not null then
@@ -139,7 +140,7 @@ begin
  end if;
  if p_release ? 'products' then
   if jsonb_array_length(p_release->'products')>20 then raise exception 'Invalid planned release'; end if;
-  for item in select value from jsonb_array_elements(p_release->'products') loop
+  for item in select value from jsonb_array_elements(p_release->'products') with ordinality order by ordinality loop
    if jsonb_typeof(item)<>'object' then raise exception 'Invalid planned release'; end if;
    if exists(select 1 from jsonb_object_keys(item) as field(key) where field.key not in ('format','label'))
     or jsonb_typeof(item->'format') is distinct from 'string' or (item ? 'label' and jsonb_typeof(item->'label')<>'string')
@@ -155,7 +156,7 @@ begin
  end if;
  if p_release ? 'promotional_links' then
   if jsonb_array_length(p_release->'promotional_links')>20 then raise exception 'Invalid planned release'; end if;
-  for item in select value from jsonb_array_elements(p_release->'promotional_links') loop
+  for item in select value from jsonb_array_elements(p_release->'promotional_links') with ordinality order by ordinality loop
    if jsonb_typeof(item)<>'object' then raise exception 'Invalid planned release'; end if;
    if exists(select 1 from jsonb_object_keys(item) as field(key) where field.key not in ('kind','url'))
     or jsonb_typeof(item->'kind') is distinct from 'string' or jsonb_typeof(item->'url') is distinct from 'string'
@@ -169,25 +170,13 @@ begin
  end if;
  if p_release ? 'recording_subject_ids' then
   if jsonb_array_length(p_release->'recording_subject_ids')>100 then raise exception 'Invalid planned release'; end if;
-  for item in select value from jsonb_array_elements(p_release->'recording_subject_ids') loop
+  for item, slot in select value,ordinality::integer
+   from jsonb_array_elements(p_release->'recording_subject_ids') with ordinality order by ordinality loop
    if jsonb_typeof(item)<>'string'
     or (item#>>'{}') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
    then raise exception 'Invalid planned release'; end if;
    recording_id:=(item#>>'{}')::uuid;
    if recordings ? recording_id::text then raise exception 'Invalid planned release'; end if;
-   -- The recording must already be saved evidence in this workspace: an internal unreleased
-   -- recording or an ISRC-backed recording with a current, non-withdrawn accepted document.
-   if not exists(
-    select 1 from public.context_subjects s
-    join public.context_documents d on d.subject_id=s.id and d.owner_id=p_owner
-    join public.context_results r on r.id=d.current_result_id and r.owner_id=p_owner and r.status='accepted'
-    where s.id=recording_id and s.kind in ('unreleased_recording','recording')
-     and not exists(select 1 from public.context_result_sources rs
-      join public.context_source_versions v on v.id=rs.source_version_id
-      join public.context_sources src on src.id=v.source_id
-      where rs.result_id=r.id and (src.withdrawn_at is not null or v.removed_at is not null)))
-   then raise exception 'Planned release references an unknown recording'; end if;
-   slot:=slot+1;
    recordings:=recordings||to_jsonb(recording_id::text);
    tracklist:=tracklist||jsonb_build_object('position',slot,'recordingSubjectId',recording_id);
   end loop;
@@ -209,6 +198,22 @@ begin
  if req.input_fingerprint<>input_hash or req.resource_id<>resource
  then raise exception 'Idempotency key already used for different input'; end if;
  if req.status in ('completed','partial','cancelled') then return to_jsonb(req)-'claim_token'; end if;
+ -- References are checked only when the request is first saved, so an identical replay returns
+ -- the saved request even after a referenced recording is withdrawn. Each recording must be
+ -- saved evidence in this workspace: an internal unreleased recording or an ISRC-backed
+ -- recording with a current, non-withdrawn accepted document.
+ for recording_id in select (value#>>'{}')::uuid from jsonb_array_elements(recordings) loop
+  if not exists(
+   select 1 from public.context_subjects s
+   join public.context_documents d on d.subject_id=s.id and d.owner_id=p_owner
+   join public.context_results r on r.id=d.current_result_id and r.owner_id=p_owner and r.status='accepted'
+   where s.id=recording_id and s.kind in ('unreleased_recording','recording')
+    and not exists(select 1 from public.context_result_sources rs
+     join public.context_source_versions v on v.id=rs.source_version_id
+     join public.context_sources src on src.id=v.source_id
+     where rs.result_id=r.id and (src.withdrawn_at is not null or v.removed_at is not null)))
+  then raise exception 'Planned release references an unknown recording'; end if;
+ end loop;
  insert into public.context_subjects(kind,resource_id) values('planned_release',resource)
  on conflict(resource_id) do update set resource_id=excluded.resource_id returning id into subject;
  -- Store identifiers are a fixed unknown set; callers can never assign them through this path.

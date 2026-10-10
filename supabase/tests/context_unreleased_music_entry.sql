@@ -7,7 +7,7 @@ declare owner uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid();
  first_subject uuid; second_subject uuid; foreign_subject uuid; isrc_subject uuid;
  resource public.context_resources; saved public.context_results; source_id uuid;
  recording jsonb:='{"title":"  Night   drive  ","working_title":"ND v3","lifecycle_state":"mixed","planned_release_date":"2027-03-05"}'::jsonb;
- single jsonb;
+ single jsonb; release_c jsonb;
 begin
  insert into public.accounts(id,name) values(owner,'Unreleased fixture'),(outsider,'Other fixture');
  -- Run the production path with the service role, not the fixture superuser.
@@ -19,7 +19,9 @@ begin
   or not (first->'output'->'gaps' ? 'ISRC not assigned')
  then raise exception 'Unreleased recording was not saved as an unresolved internal identity: %',first; end if;
  first_subject:=(first->'output'->'subjectIds'->>0)::uuid;
+ set local role service_role;
  target:=public.list_context_unreleased_recording_request_target(owner,(first->>'id')::uuid);
+ reset role;
  if target->>'subjectId'<>first_subject::text or target->>'kind'<>'unreleased_recording' or target->>'identityConfirmed'<>'false'
   or not (target->'availableFields' ? 'submitted_title') or target->'reusableModules'<>'[]'::jsonb
  then raise exception 'Unreleased recording target was incorrectly linked: %',target; end if;
@@ -83,7 +85,9 @@ begin
  if release_a->>'status'<>'partial' or release_a->'input'->>'title'<>'Night Drive EP' or release_a->'input'->>'kind'<>'planned_release'
   or release_a->'input' ? 'store_ids' or not (release_a->'output'->'gaps' ? 'UPC and store identifiers not assigned')
  then raise exception 'Planned release was not saved as an unresolved internal identity: %',release_a; end if;
+ set local role service_role;
  target:=public.list_context_planned_release_request_target(owner,(release_a->>'id')::uuid);
+ reset role;
  if target->>'kind'<>'planned_release' or target->>'identityConfirmed'<>'false'
   or not (target->'availableFields' ? 'tracklist') or not (target->'availableFields' ? 'submitted_title')
  then raise exception 'Planned release target was incorrectly linked: %',target; end if;
@@ -114,6 +118,16 @@ begin
  then raise exception 'One recording could not appear on two planned releases'; end if;
  if (public.create_context_planned_release_request(owner,owner,single,'release-b')->>'id')<>release_b->>'id'
  then raise exception 'Planned release replay created a second request'; end if;
+ release_c:=public.create_context_planned_release_request(owner,owner,'{"title":"Untitled album"}'::jsonb,'release-c');
+ if (select normalized_response->'release'->>'lifecycle_state' from public.context_results
+   where owner_id=owner and subject_id=(release_c->'output'->'subjectIds'->>0)::uuid and topic='planned_release')<>'unknown'
+ then raise exception 'Omitted release lifecycle was not recorded as unknown'; end if;
+ begin
+  perform public.create_context_planned_release_request(owner,owner,'{"title":"Nulled","lifecycle_state":null}'::jsonb,'null-lifecycle');
+  raise exception 'TEST_FAILURE: null release lifecycle accepted';
+ exception when others then
+  if SQLERRM like 'TEST_FAILURE:%' or SQLERRM<>'Invalid planned release' then raise; end if;
+ end;
  begin
   perform public.create_context_planned_release_request(owner,owner,single||'{"lifecycle_state":"announced"}'::jsonb,'release-b');
   raise exception 'TEST_FAILURE: changed release reused the key';
@@ -209,6 +223,8 @@ begin
  exception when others then
   if SQLERRM like 'TEST_FAILURE:%' or SQLERRM<>'Planned release references an unknown recording' then raise; end if;
  end;
+ if (public.create_context_planned_release_request(owner,owner,single,'release-b')->>'id')<>release_b->>'id'
+ then raise exception 'Identical planned release replay failed after a recording withdrawal'; end if;
  if (select status from public.context_results where id=saved.id)<>'accepted'
  then raise exception 'Earlier planned release snapshot was rewritten by a recording withdrawal'; end if;
  -- The ISRC-backed recording arm is unchanged by the additive migration.
@@ -222,12 +238,21 @@ begin
   raise exception 'TEST_FAILURE: internal recording identity accepted an ISRC column';
  exception when check_violation then null;
  end;
- if pg_catalog.has_function_privilege('authenticated','public.create_context_unreleased_recording_request(uuid,uuid,jsonb,text)','EXECUTE')
-  or pg_catalog.has_function_privilege('anon','public.create_context_planned_release_request(uuid,uuid,jsonb,text)','EXECUTE')
-  or pg_catalog.has_function_privilege('authenticated','public.list_context_unreleased_recording_request_target(uuid,uuid)','EXECUTE')
-  or pg_catalog.has_function_privilege('authenticated','public.list_context_planned_release_request_target(uuid,uuid)','EXECUTE')
-  or not pg_catalog.has_function_privilege('service_role','public.create_context_planned_release_request(uuid,uuid,jsonb,text)','EXECUTE')
+ if exists(select 1 from unnest(array['anon','authenticated']) as browser(role)
+   cross join unnest(array[
+    'public.create_context_unreleased_recording_request(uuid,uuid,jsonb,text)',
+    'public.create_context_planned_release_request(uuid,uuid,jsonb,text)',
+    'public.list_context_unreleased_recording_request_target(uuid,uuid)',
+    'public.list_context_planned_release_request_target(uuid,uuid)']) as fn(signature)
+   where pg_catalog.has_function_privilege(browser.role,fn.signature,'EXECUTE'))
  then raise exception 'Browser role can execute unreleased music functions'; end if;
- raise notice 'PASS: internal identities, explicit unknown identifiers, replay, conflicts, multi-release tracklists, workspace scoping, withdrawal, unchanged ISRC arm and browser grants';
+ if exists(select 1 from unnest(array[
+    'public.create_context_unreleased_recording_request(uuid,uuid,jsonb,text)',
+    'public.create_context_planned_release_request(uuid,uuid,jsonb,text)',
+    'public.list_context_unreleased_recording_request_target(uuid,uuid)',
+    'public.list_context_planned_release_request_target(uuid,uuid)']) as fn(signature)
+   where not pg_catalog.has_function_privilege('service_role',fn.signature,'EXECUTE'))
+ then raise exception 'Service role cannot execute unreleased music functions'; end if;
+ raise notice 'PASS: internal identities, explicit unknown identifiers, replay (including after withdrawal), conflicts, unknown release lifecycle, multi-release tracklists, workspace scoping, withdrawal, unchanged ISRC arm and browser grants';
 end $$;
 rollback;
