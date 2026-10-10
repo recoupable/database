@@ -20,8 +20,8 @@ class ReleasePlayerFixture(unittest.TestCase):
                        check=True, capture_output=True)
         cls.addClassCleanup(cls.stop)
         cls.sql("CREATE ROLE service_role BYPASSRLS; CREATE ROLE anon; CREATE ROLE authenticated; CREATE TABLE public.accounts(id uuid PRIMARY KEY);")
-        migration = ROOT / 'supabase/migrations' / MIGRATION
-        if migration.exists():
+        for name in [MIGRATION, '20261010060001_release_player_reports.sql']:
+            migration = ROOT / 'supabase/migrations' / name
             cls.sql(migration.read_text())
 
     @classmethod

@@ -58,7 +58,7 @@ class ReleasePlayers(ReleasePlayerFixture):
     def test_duration_and_provider_are_bounded(self):
         self.assertNotEqual(self.event(listened=30000,succeeds=False).returncode,0)
         self.assertNotEqual(self.event(provider='apple_music',succeeds=False).returncode,0)
-        self.sql(f"UPDATE player_sessions SET last_event_at=now()-interval '5 seconds' WHERE id='{self.session}'")
+        self.sql(f"UPDATE player_sessions SET created_at=now()-interval '5 seconds',last_event_at=now()-interval '5 seconds' WHERE id='{self.session}'")
         self.event(listened=4000)
         report=json.loads(self.sql(f"SET ROLE service_role; SELECT read_player_report('{self.owner}','{self.player}',0)").stdout)
         self.assertEqual(report['reportedListeningMs'],4000)
@@ -72,10 +72,34 @@ class ReleasePlayers(ReleasePlayerFixture):
         self.assertNotEqual(self.event(succeeds=False).returncode,0)
         self.assertNotEqual(self.connect(succeeds=False).returncode,0)
 
+    def test_expired_session_rejects_event_and_connection(self):
+        self.sql(f"UPDATE player_sessions SET created_at=now()-interval '2 hours',expires_at=now()-interval '1 second' WHERE id='{self.session}'")
+        self.assertNotEqual(self.event(succeeds=False).returncode,0)
+        self.assertNotEqual(self.connect(succeeds=False).returncode,0)
+
     def test_browser_roles_cannot_read_fans_or_write_events(self):
         for role in ['anon','authenticated']:
-            for statement in ['SELECT * FROM player_fans', f"SELECT read_player_report('{self.owner}','{self.player}',0)"]:
+            for statement in ['SELECT * FROM player_fans', f"SELECT read_player_report('{self.owner}','{self.player}',0)", f"SELECT record_player_listening('{self.session}',1,'spotify','{uuid.uuid4()}','playing',NULL,0,0)"]:
                 self.assertIn('permission denied',self.sql(f'SET ROLE {role}; {statement}',succeeds=False).stderr)
 
     def test_report_does_not_cross_workspace_boundary(self):
         self.assertNotEqual(self.sql(f"SET ROLE service_role; SELECT read_player_report('{uuid.uuid4()}','{self.player}',0)",succeeds=False).returncode,0)
+
+    def test_timing_allowance_is_cumulative(self):
+        self.event(listened=2000)
+        self.assertNotEqual(self.event(listened=2000,succeeds=False).returncode,0)
+
+    def test_event_id_retry_across_sessions_returns_false(self):
+        event_id=str(uuid.uuid4())
+        self.event(event_id=event_id)
+        second=str(uuid.uuid4())
+        self.add_session(second,self.player)
+        self.session=second
+        self.assertEqual(self.event(event_id=event_id).stdout.strip(),'f')
+
+    def test_event_window_uses_event_time(self):
+        self.event()
+        self.sql(f"UPDATE player_sessions SET created_at=now()-interval '30 days 1 hour',expires_at=now()-interval '30 days' WHERE id='{self.session}'")
+        report=json.loads(self.sql(f"SET ROLE service_role; SELECT read_player_report('{self.owner}','{self.player}',0)").stdout)
+        self.assertEqual(report['sessions'],0)
+        self.assertEqual(report['playEvents'],1)
