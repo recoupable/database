@@ -36,6 +36,24 @@ Replaying the same organization/actor/key and normalized input returns the saved
 Research-to-roster isolation: see [RESEARCH-ROSTER.md](RESEARCH-ROSTER.md) for the
 real transaction suite, preserved evidence, explicit enrollment and deployment limits.
 
+## Identity conflict quarantine
+
+Run `python3 -m unittest discover -s tests -p 'test_identity_conflicts.py'` on disposable local
+PostgreSQL. It extends the research fixture with `20261010211900_context_identity_conflict_quarantine.sql`
+and covers a Spotify track already mapped to a different ISRC through legacy `song_identifiers`, retry
+idempotence, resolution after the legacy mapping is removed, an accepted identity link to another
+recording, unchanged non-conflicting research and browser-role denial. The inherited onboarding
+regressions run through the same class. On macOS a locale must be exported (for example `LC_ALL=C`)
+or the postmaster refuses to start.
+
+Apply the migration before deploying API consumers that read `output.identityConflicts`. The
+conflicting observation is saved as a `conflict` identity link carrying both ISRCs, the provider ID,
+request ID, source URL, retrieval time and observed title; the request fails with
+`output.identityConflicts` and no songs, identifiers, subjects, artists or documents are written.
+Accepted mappings are never downgraded or merged; artist-identity ambiguity still rejects
+transactionally. There is no automatic merge/split, resolution operation or cleanup of existing rows;
+hosted application and live verification remain outside this fixture.
+
 ## Organization-owned player fan contacts
 
 Run `python3 -m unittest discover -s tests -p 'test_player_org_fans.py'` on disposable local PostgreSQL. The suite applies the actual `20261010100000_player_organization_contacts.sql` migration to legacy synthetic fan data and exercises backfill, stable relationship/session IDs, latest non-null contact profiles, parallel sign-ins, separate provider identities despite identical emails, cross-workspace isolation, browser-role denial and existing playback/reporting behavior. CI runs both player suites on PostgreSQL 15 and 16.
