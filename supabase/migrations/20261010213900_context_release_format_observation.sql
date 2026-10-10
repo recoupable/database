@@ -2,15 +2,19 @@
 -- observation that is already saved for a release case. Spotify metadata alone
 -- cannot establish reissue or physical format, so those stay the literal 'unknown';
 -- a UPC is passed through only when the provider reported one, never inferred.
+-- Disc structure is definite only when every reported track slot was collected with a
+-- disc number. A partial track list (page limit or a failed later page) proves at most
+-- that a release has several discs, never how many or that it has only one.
 -- Additive read-side change: no provider calls, no new tables, no identity writes.
--- Replacing read_context_release_case changes every case fingerprint, so saved
--- reviews read stale after release; that is the designed changed-evidence behavior.
+-- The case fingerprint hashes the whole projected body, so adding release_format and
+-- its gap changes every fingerprint even though no evidence changed: saved reviews read
+-- stale after release and operators must re-review those cases.
 begin;
-create function public.project_context_release_format(p_album jsonb,p_tracks jsonb)
+create function public.project_context_release_format(p_album jsonb,p_tracks jsonb,p_coverage jsonb)
 returns jsonb language sql immutable set search_path='' as $$
  select jsonb_build_object(
   'source','spotify_album_observation',
-  'state',case when jsonb_typeof(p_album)='object' then 'observed' else 'uncollected' end,
+  'state',case when c.collected then 'observed' else 'uncollected' end,
   'observed_type',p_album->>'album_type',
   'format_state',case when p_album->>'album_type' in ('single','album','compilation') then p_album->>'album_type' else 'unknown' end,
   'reported_total_tracks',case when p_album->>'total_tracks' ~ '^[0-9]{1,9}$' then (p_album->>'total_tracks')::integer end,
@@ -18,18 +22,25 @@ returns jsonb language sql immutable set search_path='' as $$
   'release_date_precision',p_album->>'release_date_precision',
   'label',p_album->>'label',
   'upc',nullif(p_album->'external_ids'->>'upc',''),
-  'upc_state',case when jsonb_typeof(p_album) is distinct from 'object' then 'uncollected'
+  'upc_state',case when not c.collected then 'uncollected'
    when nullif(p_album->'external_ids'->>'upc','') is null then 'not_observed' else 'observed' end,
-  'disc_count',discs.highest,
-  'multi_disc',case when discs.highest is null then null else discs.highest>1 end,
+  'track_coverage',case when not c.collected then 'uncollected' when c.complete then 'full' else 'partial' end,
+  'disc_count',case when c.complete and discs.numbered=discs.slots then discs.highest end,
+  'multi_disc',case when discs.highest>1 then true
+   when c.complete and discs.numbered=discs.slots and discs.highest is not null then false end,
   'reissue','unknown',
   'physical_format','unknown')
- from (select max((slot->>'disc_number')::integer) as highest
-  from jsonb_array_elements(case when jsonb_typeof(p_tracks)='array' then p_tracks else '[]'::jsonb end) slot
-  where jsonb_typeof(slot)='object' and slot->>'disc_number' ~ '^[0-9]{1,9}$') discs;
+ from (select count(*) as slots,count(*) filter (where s.numbered) as numbered,
+   max(case when s.numbered then (s.slot->>'disc_number')::integer end) as highest
+  from (select slot,coalesce(jsonb_typeof(slot)='object' and slot->>'disc_number' ~ '^[0-9]{1,9}$',false) as numbered
+   from jsonb_array_elements(case when jsonb_typeof(p_tracks)='array' then p_tracks else '[]'::jsonb end) slot) s) discs
+ cross join lateral (select coalesce(jsonb_typeof(p_album)='object',false) as collected,
+   -- Full only when the collector reported full extent and every reported slot is present.
+   coalesce(jsonb_typeof(p_album)='object' and p_coverage->>'extent'='full'
+    and case when p_coverage->>'reportedTotal' ~ '^[0-9]{1,9}$' then discs.slots=(p_coverage->>'reportedTotal')::bigint else false end,false) as complete) c;
 $$;
-revoke all on function public.project_context_release_format(jsonb,jsonb) from public,anon,authenticated;
-grant execute on function public.project_context_release_format(jsonb,jsonb) to service_role;
+revoke all on function public.project_context_release_format(jsonb,jsonb,jsonb) from public,anon,authenticated;
+grant execute on function public.project_context_release_format(jsonb,jsonb,jsonb) to service_role;
 
 -- Identical to 20261008160000 except the added release_format key and the third gap.
 create or replace function public.read_context_release_case(p_actor uuid,p_owner uuid,p_request uuid)
@@ -75,8 +86,10 @@ begin
  body:=jsonb_build_object('contract_version','release-case-v1','operation','release_metadata_reconciliation',
   'request_id',p_request,'subject_id',subject,'title',observed.normalized_response->'album'->>'name',
   'release_url','https://open.spotify.com/album/'||(page->>'releaseId'),'readiness',case when page->>'state'='ready' then 'partial' else 'blocked' end,
-  -- Disc structure comes from the whole observed track array, not the 100-slot display page.
-  'release_format',public.project_context_release_format(observed.normalized_response->'album',observed.normalized_response->'tracks'),
+  -- Disc structure comes from the whole observed track array and its collection coverage,
+  -- not the 100-slot display page.
+  'release_format',public.project_context_release_format(observed.normalized_response->'album',
+    observed.normalized_response->'tracks',observed.normalized_response->'trackCoverage'),
   'tracks',tracks,'track_page',page,'identity_observations',identities,'evidence_manifest',manifest,
   'gaps',jsonb_build_array('Only saved Spotify observations are supported; cross-source comparison is unavailable.',
     'Composition, songwriter, publisher, contracts and approved-master evidence are not yet linked.',
