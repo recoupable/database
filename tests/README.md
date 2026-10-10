@@ -41,3 +41,28 @@ real transaction suite, preserved evidence, explicit enrollment and deployment l
 Run `python3 -m unittest discover -s tests -p 'test_player_org_fans.py'` on disposable local PostgreSQL. The suite applies the actual `20261010100000_player_organization_contacts.sql` migration to legacy synthetic fan data and exercises backfill, stable relationship/session IDs, latest non-null contact profiles, parallel sign-ins, separate provider identities despite identical emails, cross-workspace isolation, browser-role denial and existing playback/reporting behavior. CI runs both player suites on PostgreSQL 15 and 16.
 
 Rollout: apply the contact migration before deploying API readers of `contact_id` / `player_fan_contacts`. Existing `connect_player_fan` callers continue working through the new trigger. Artist relationships keep their original IDs; sessions and events are not reassigned. Workspace contacts never merge by email/name or across owners. The migration locks player_fans while backfilling and installing its composite identity FK; new connections can wait briefly during deployment. On API rollback, retain the additive contact schema and trigger so previously deployed capture still maintains contacts. Do not drop the new contacts or remove relationship/session history as a rollback shortcut. Live post-deployment verification is still required.
+
+## Songwriter identity resolution
+
+Run `python3 -m unittest discover -s tests -p 'test_songwriter_identity_resolution.py'` on
+disposable local PostgreSQL (on macOS set a valid locale first, for example `LC_ALL=C`, or the
+disposable postmaster refuses to start). The suite applies the Context foundation and release
+prerequisites, the catalog and songwriter-name entry migrations, the professional roster table
+and confirmation RPC, then `20261010213600_context_songwriter_identity_resolution.sql`.
+
+Coverage: a saved songwriter-name request is linked to one explicitly selected organization
+professional and its target reads `identityConfirmed: true` with the professional ID; exact
+replays and sixteen parallel identical calls yield one receipt; the same key for a different
+request, professional or actor conflicts; a second professional for a resolved request is
+rejected rather than overwritten; a professional from another workspace or an unknown ID is
+denied; revoked and never-granted membership are denied, including replay; same-name
+professionals remain candidates until an ID is selected; unready, withdrawn and invalid-key
+requests are rejected; browser roles cannot read or execute; and a failed receipt insert rolls
+back the request output update.
+
+Apply the migration after `20260925100000_context_songwriter_name_entry.sql` and
+`20261008050000`–`20261008050300` and before the API consumer. The receipt table is
+organization-private with RLS and service-role select/insert only; the invoker RPC rechecks
+membership, locks the request and the professional, and changes only the request output
+(`resolvedProfessionalId`, gap removed). It creates no professional, roster member, login
+account, enrichment or rights. Local fixture success is not hosted verification.
