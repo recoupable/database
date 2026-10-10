@@ -109,6 +109,9 @@ class ReleasePlayers(ReleasePlayerFixture):
         self.assertEqual(result.stdout.strip(), 'spotify|t')
         result = self.sql(f"UPDATE release_players SET free_playback='audio' WHERE id='{self.player}'", succeeds=False)
         self.assertNotEqual(result.returncode, 0)
+        for blank in ['', '   ']:
+            result = self.sql(f"UPDATE release_players SET free_playback='audio',audio_url='{blank}' WHERE id='{self.player}'", succeeds=False)
+            self.assertNotEqual(result.returncode, 0)
         self.sql(f"UPDATE release_players SET free_playback='audio', audio_url='https://storage.test/song.mp3' WHERE id='{self.player}'")
         result = self.sql(f"UPDATE release_players SET audio_url=NULL WHERE id='{self.player}'", succeeds=False)
         self.assertNotEqual(result.returncode, 0)

@@ -20,7 +20,7 @@ class ReleasePlayerFixture(unittest.TestCase):
                        check=True, capture_output=True)
         cls.addClassCleanup(cls.stop)
         cls.sql("CREATE ROLE service_role BYPASSRLS; CREATE ROLE anon; CREATE ROLE authenticated; CREATE TABLE public.accounts(id uuid PRIMARY KEY);")
-        for name in [MIGRATION, '20261010060001_release_player_reports.sql', '20261010060002_player_duration_budget.sql', '20261010060003_player_free_playback.sql']:
+        for name in [MIGRATION, '20261010060001_release_player_reports.sql', '20261010060002_player_duration_budget.sql', '20261010060003_player_free_playback.sql', '20261010060004_player_audio_not_blank.sql']:
             migration = ROOT / 'supabase/migrations' / name
             cls.sql(migration.read_text())
 
