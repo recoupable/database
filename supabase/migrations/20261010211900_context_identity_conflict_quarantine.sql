@@ -1,9 +1,16 @@
 -- Conflicting track-to-recording evidence is quarantined instead of discarded.
--- A Spotify track already mapped to a different ISRC (legacy song_identifiers or an accepted
--- identity link) saves a 'conflict' identity link with both ISRCs and the source attribution,
--- fails the request with output.identityConflicts and writes no songs, identifiers, subjects,
--- artists or documents. Accepted mappings are never downgraded. No automatic merge/split.
--- The non-conflict path is unchanged from 20261009190000_context_research_without_roster.sql.
+-- A Spotify track already mapped to a different ISRC through legacy song_identifiers saves a
+-- 'conflict' identity link from the track to the existing recording subject (created if absent)
+-- carrying both ISRCs and the provider source attribution. An accepted identity link to another
+-- recording is reported unchanged and never downgraded. The request fails with
+-- output.identityConflicts and an identity_conflict error; no songs, identifiers, observed
+-- recording, release or artist subjects, artists or documents are written.
+-- Resolution: a later verified observation accepted for the same track promotes a matching
+-- conflict link to 'accepted' (keeping its evidence under resolvedConflict) and marks the
+-- track's other open conflict links 'rejected' with the superseding ISRC. A non-accepted link
+-- that still blocks acceptance raises instead of completing without an accepted identity.
+-- No automatic merge/split or cleanup. The rest of the non-conflict path is unchanged from
+-- 20261009190000_context_research_without_roster.sql.
 begin;
 create or replace function public.commit_spotify_context(p_owner uuid,p_request uuid,p_token uuid,p_payload jsonb)
 returns jsonb language plpgsql set search_path='' as $$
@@ -39,13 +46,14 @@ begin
    -- The existing songs row is guaranteed by the song_identifiers/context_subjects foreign keys.
    insert into public.context_subjects(kind,song_isrc) values('recording',existing_isrc)
     on conflict(song_isrc) do update set song_isrc=excluded.song_isrc returning id into conflict_subject;
-   -- An accepted mapping is never downgraded; any other existing row refreshes its evidence.
+   -- Shared provider evidence only; the private request references the link through its output.
+   -- An accepted mapping is never downgraded and reviewed rows keep their evidence.
    insert into public.context_resource_links as cl(resource_id,subject_id,relation,status,evidence)
     values(resource.id,conflict_subject,'identity','conflict',jsonb_build_object(
-     'observedIsrc',isrc,'existingIsrc',existing_isrc,'providerId',resource.provider_id,'requestId',p_request,
+     'observedIsrc',isrc,'existingIsrc',existing_isrc,'providerId',resource.provider_id,
      'sourceUrl',resource.canonical_url,'retrievedAt',coalesce((p_payload->>'retrievedAt')::timestamptz,now()),
      'observedTitle',p_payload->>'title'))
-    on conflict(resource_id,subject_id,relation) do update set evidence=excluded.evidence where cl.status<>'accepted'
+    on conflict(resource_id,subject_id,relation) do update set evidence=excluded.evidence where cl.status='conflict'
     returning cl.id into conflict_link;
    if conflict_link is null then
     select l.id into conflict_link from public.context_resource_links l
@@ -56,7 +64,7 @@ begin
    end if;
   end loop;
   update public.context_requests set status='failed',
-   error='Conflicting recording identity: this Spotify track is already mapped to a different ISRC. Review required before context can be accepted.',
+   error='identity_conflict: This Spotify track is already mapped to a different ISRC. The conflicting evidence was saved for review and nothing was accepted; retry this request after the mapping is resolved.',
    output=jsonb_build_object('identityConflicts',jsonb_build_array(jsonb_build_object('providerId',resource.provider_id,
     'observedIsrc',isrc,'existingIsrcs',to_jsonb(conflict_isrcs),'linkIds',to_jsonb(conflict_links))),
     'subjectIds','[]'::jsonb,'artists','[]'::jsonb,'gaps','[]'::jsonb,'providerCostMicros',0,'model',null),
@@ -72,8 +80,18 @@ begin
  insert into public.song_identifiers(song,platform,identifier_type,value)
  select isrc,'spotify','track_id',resource.provider_id where not exists(select 1 from public.song_identifiers si where si.song=isrc and si.platform='spotify' and si.identifier_type='track_id' and si.value=resource.provider_id);
  insert into public.context_subjects(kind,song_isrc) values('recording',isrc) on conflict(song_isrc) do update set song_isrc=excluded.song_isrc returning id into recording;
- insert into public.context_resource_links(resource_id,subject_id,relation,status,evidence)
- values(resource.id,recording,'identity','accepted',jsonb_build_object('isrc',isrc)) on conflict(resource_id,subject_id,relation) do nothing;
+ -- A quarantined link confirmed by this verified observation becomes the accepted identity.
+ insert into public.context_resource_links as cl(resource_id,subject_id,relation,status,evidence)
+ values(resource.id,recording,'identity','accepted',jsonb_build_object('isrc',isrc)) on conflict(resource_id,subject_id,relation)
+ do update set status='accepted',evidence=jsonb_build_object('isrc',isrc,'resolvedConflict',cl.evidence) where cl.status='conflict';
+ if not exists(select 1 from public.context_resource_links l where l.resource_id=resource.id and l.subject_id=recording
+  and l.relation='identity' and l.status='accepted') then
+  raise exception 'Conflicting recording identity: a reviewed identity link blocks this recording';
+ end if;
+ -- The accepted identity supersedes this track's other open conflicts; their evidence is kept.
+ update public.context_resource_links cl set status='rejected',evidence=cl.evidence||jsonb_build_object(
+  'resolution','superseded_by_accepted_identity','acceptedIsrc',isrc,'resolvedAt',now())
+  where cl.resource_id=resource.id and cl.relation='identity' and cl.status='conflict' and cl.subject_id<>recording;
  -- A single is also represented by a Spotify album container. Track and album IDs are distinct.
  insert into public.context_resources(provider,resource_kind,provider_id,canonical_url)
  values('spotify','release',album_id,'https://open.spotify.com/album/'||album_id)

@@ -39,20 +39,31 @@ real transaction suite, preserved evidence, explicit enrollment and deployment l
 ## Identity conflict quarantine
 
 Run `python3 -m unittest discover -s tests -p 'test_identity_conflicts.py'` on disposable local
-PostgreSQL. It extends the research fixture with `20261010211900_context_identity_conflict_quarantine.sql`
-and covers a Spotify track already mapped to a different ISRC through legacy `song_identifiers`, retry
-idempotence, resolution after the legacy mapping is removed, an accepted identity link to another
-recording, unchanged non-conflicting research and browser-role denial. The inherited onboarding
-regressions run through the same class. On macOS a locale must be exported (for example `LC_ALL=C`)
-or the postmaster refuses to start.
+PostgreSQL. It extends the research-roster suite with `20261010211900_context_identity_conflict_quarantine.sql`,
+so the inherited research-roster and onboarding regressions also run against the new function. It covers
+a Spotify track already mapped to a different ISRC through legacy `song_identifiers`, retry idempotence,
+resolution after the legacy mapping is removed, a later observation that confirms the quarantined ISRC,
+a reviewed (non-accepted) link that would otherwise block acceptance, an accepted identity link to
+another recording, claimed and ready guest completion/adoption, unchanged non-conflicting research and
+browser-role denial. On macOS a locale must be exported (for example `LC_ALL=C`) or the postmaster
+refuses to start.
 
-Apply the migration before deploying API consumers that read `output.identityConflicts`. The
-conflicting observation is saved as a `conflict` identity link carrying both ISRCs, the provider ID,
-request ID, source URL, retrieval time and observed title; the request fails with
-`output.identityConflicts` and no songs, identifiers, subjects, artists or documents are written.
-Accepted mappings are never downgraded or merged; artist-identity ambiguity still rejects
-transactionally. There is no automatic merge/split, resolution operation or cleanup of existing rows;
-hosted application and live verification remain outside this fixture.
+Apply the migration before deploying API consumers that read `output.identityConflicts`. A legacy
+conflicting mapping is saved as a `conflict` identity link from the track to the existing recording
+subject (created if absent), carrying both ISRCs, the provider ID, source URL, retrieval time and
+observed title; no private request ID is copied into this shared evidence. An accepted identity link to
+another recording is reported through `linkIds` and never downgraded. The request fails with an
+`identity_conflict: ` error and `output.identityConflicts`; no songs, identifiers, observed recording,
+release or artist subjects, artists or documents are written. A guest workspace still becomes `ready`
+(its payload was extracted) while the destination request reports the conflict.
+
+When a later verified observation is accepted for the same track, a conflict link to that recording is
+promoted to `accepted` (its evidence kept under `resolvedConflict`) and the track's other open conflict
+links become `rejected` with `resolution`, `acceptedIsrc` and `resolvedAt` added to their evidence. A
+`candidate` or `rejected` link that still blocks acceptance raises instead of completing without an
+accepted identity. Artist-identity ambiguity still rejects transactionally. There is no automatic
+merge/split, review operation or cleanup of existing rows; hosted application and live verification
+remain outside this fixture.
 
 ## Organization-owned player fan contacts
 
