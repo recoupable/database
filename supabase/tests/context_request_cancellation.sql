@@ -4,6 +4,8 @@ do $$
 declare owner uuid:=gen_random_uuid(); member uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid();
  token uuid:=gen_random_uuid(); queued jsonb; running jsonb; done jsonb; part jsonb; failed jsonb; receipt jsonb;
  before_row jsonb; after_row jsonb; req uuid;
+ -- Cancellation may change only these columns; error, output and evidence must survive it.
+ released text[]:=array['status','claim_token','lease_expires_at','updated_at'];
 begin
  insert into public.accounts(id,name) values(owner,'Synthetic cancellation owner'),(member,'Workspace member'),(outsider,'Other account');
  insert into public.account_organization_ids(account_id,organization_id) values(member,owner);
@@ -17,11 +19,13 @@ begin
 
  -- Queued: a workspace member stops the request before any worker claims it.
  req:=(queued->>'id')::uuid;
+ select to_jsonb(r) into before_row from public.context_requests r where id=req;
  receipt:=public.cancel_context_request(owner,member,req);
+ select to_jsonb(r) into after_row from public.context_requests r where id=req;
  if receipt->>'outcome' is distinct from 'cancelled' or receipt->'request'->>'status' is distinct from 'cancelled'
   or receipt->'request'->>'id' is distinct from req::text or receipt->'request' ? 'claim_token'
-  or receipt->'request'->>'error' is distinct from 'Cancelled by a workspace member before completion'
-  or receipt->'request'->>'lease_expires_at' is not null
+  or receipt->'request'->>'error' is not null or receipt->'request'->>'lease_expires_at' is not null
+  or (before_row-released) is distinct from (after_row-released)
  then raise exception 'Queued cancellation receipt is wrong: %',receipt; end if;
  if public.read_context_request(owner,req)->>'status' is distinct from 'cancelled' then raise exception 'Cancellation was not persisted'; end if;
  if public.claim_context_request(owner,req,gen_random_uuid()) then raise exception 'Cancelled request was claimed'; end if;
@@ -58,15 +62,21 @@ begin
   if sqlerrm not like '%no longer owns request%' then raise; end if;
  end;
  if public.fail_context_request(owner,req,token,'late failure') then raise exception 'Stale worker overwrote cancellation'; end if;
- if (select status||':'||error from public.context_requests where id=req) is distinct from 'cancelled:Cancelled by a workspace member before completion'
+ if exists(select 1 from public.context_requests where id=req and (status<>'cancelled' or error is not null))
  then raise exception 'Cancellation outcome drifted after stale worker calls'; end if;
 
  -- Failed requests are retryable, so cancelling them stops future retries.
  req:=(failed->>'id')::uuid;
  perform public.claim_context_request(owner,req,token);
  if not public.fail_context_request(owner,req,token,'provider unavailable') then raise exception 'Fixture failure rejected'; end if;
+ select to_jsonb(r) into before_row from public.context_requests r where id=req;
  receipt:=public.cancel_context_request(owner,member,req);
+ select to_jsonb(r) into after_row from public.context_requests r where id=req;
  if receipt->>'outcome' is distinct from 'cancelled' then raise exception 'Failed request not cancelled: %',receipt; end if;
+ -- The saved failure reason stays distinct from the cancellation, which only status records.
+ if receipt->'request'->>'error' is distinct from 'provider unavailable' or after_row->>'error' is distinct from 'provider unavailable'
+  or (before_row-released) is distinct from (after_row-released)
+ then raise exception 'Cancellation overwrote the saved failure: %',receipt; end if;
  if public.claim_context_request(owner,req,gen_random_uuid()) then raise exception 'Cancelled failed request was reclaimed'; end if;
 
  -- Workspace scope: another owner sees nothing, a non-member or revoked member is denied, and nothing changes.
@@ -95,6 +105,6 @@ begin
   or has_function_privilege('anon','public.cancel_context_request(uuid,uuid,uuid)','execute')
   or not has_function_privilege('service_role','public.cancel_context_request(uuid,uuid,uuid)','execute')
  then raise exception 'Browser bypass exposed'; end if;
- raise notice 'PASS: queued, idempotent replay, terminal evidence kept, running lease fenced, failed retry stopped, workspace scope, revoked membership and role grants';
+ raise notice 'PASS: queued, idempotent replay, terminal evidence kept, running lease fenced, failed retry stopped with its failure reason kept, workspace scope, revoked membership and role grants';
 end $$;
 rollback;

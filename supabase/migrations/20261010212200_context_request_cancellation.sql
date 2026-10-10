@@ -1,9 +1,11 @@
 -- Deterministic, owner-scoped cancellation of a saved Context request (recoupable/app#2122).
--- Cancellation changes only context_requests.status and its worker claim. It makes no credit,
--- enrichment-attempt or provider-settlement change (paid settlement remains the CE07 lane) and
--- never withdraws evidence that was already accepted. Completed and partial requests keep their
--- saved evidence and are reported as not_cancellable instead of raising, so every caller receives
--- a persisted state. Requires authorize_context_case_actor from 20261008160000_context_release_cases.sql.
+-- Cancellation changes only context_requests.status and releases its worker claim. The saved error,
+-- output and evidence are kept, so a failed request's classified failure reason stays readable and
+-- request state never overwrites provider state. It makes no credit, enrichment-attempt or
+-- provider-settlement change (paid settlement remains the CE07 lane) and never withdraws evidence
+-- that was already accepted. Completed and partial requests keep their saved evidence and are
+-- reported as not_cancellable instead of raising, so every caller receives a persisted state.
+-- Requires authorize_context_case_actor from 20261008160000_context_release_cases.sql.
 begin;
 set local lock_timeout='5s';
 set local statement_timeout='30s';
@@ -20,8 +22,8 @@ begin
  else
   -- queued, failed, or running: a running worker loses its claim, so commit_spotify_context raises
   -- 'Worker no longer owns request', fail_context_request is a no-op and claim_context_request refuses.
-  update public.context_requests set status='cancelled',claim_token=null,lease_expires_at=null,
-   error=left('Cancelled by a workspace member before completion',1000),updated_at=now()
+  -- error is deliberately untouched: status records the cancellation, error keeps the last failure.
+  update public.context_requests set status='cancelled',claim_token=null,lease_expires_at=null,updated_at=now()
   where id=req.id returning * into req;
   outcome:='cancelled';
  end if;
