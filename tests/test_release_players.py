@@ -103,3 +103,15 @@ class ReleasePlayers(ReleasePlayerFixture):
         report=json.loads(self.sql(f"SET ROLE service_role; SELECT read_player_report('{self.owner}','{self.player}',0)").stdout)
         self.assertEqual(report['sessions'],0)
         self.assertEqual(report['playEvents'],1)
+
+    def test_free_playback_defaults_and_audio_requirement(self):
+        result = self.sql(f"SELECT free_playback, audio_url IS NULL FROM release_players WHERE id='{self.player}'")
+        self.assertEqual(result.stdout.strip(), 'spotify|t')
+        result = self.sql(f"UPDATE release_players SET free_playback='audio' WHERE id='{self.player}'", succeeds=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.sql(f"UPDATE release_players SET free_playback='audio', audio_url='https://storage.test/song.mp3' WHERE id='{self.player}'")
+        result = self.sql(f"UPDATE release_players SET audio_url=NULL WHERE id='{self.player}'", succeeds=False)
+        self.assertNotEqual(result.returncode, 0)
+        result = self.sql(f"UPDATE release_players SET free_playback='other' WHERE id='{self.player}'", succeeds=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.sql(f"UPDATE release_players SET free_playback='spotify',audio_url=NULL WHERE id='{self.player}'")
