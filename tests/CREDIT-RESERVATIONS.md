@@ -30,6 +30,28 @@ The reservation ID (`hold-v1-…`) and the charge receipt ID (`charge-v1-…`) b
 derive from the billing owner and operation key. A key identifies one chargeable
 attempt: never generate a fresh key on retry and never reuse one for independent work.
 A lost reply is ambiguous; replay the same call with the same key to learn the state.
+Every rejection these functions raise uses SQLSTATE `22023` and rolls back, so it is
+definite for that call: nothing was written, and an unchanged replay fails the same way.
+
+A `reused` receipt with status `held` goes to every duplicate delivery of the same
+key, so a hold permits paid work but is not an execution lease. Duplicate deliveries
+must be deduplicated by the caller's own attempt identity before provider dispatch;
+settlement charges once either way.
+
+## Activation prerequisites
+
+These functions are safe to release with no callers. Do not connect any caller until
+these also land:
+
+- **database#101 and api#1009** (atomic refill and top-up writers). On `main`, the
+  API top-up (`incrementRemainingCredits`) and monthly refill (`checkAndResetCredits`)
+  read the balance and later write an absolute value. A settlement that commits between
+  that read and write is erased from the balance while its `usage_events` row remains.
+- **database#88** (one wallet per account). Until then, an account with duplicate
+  wallet rows is rejected rather than charged.
+
+The top-up and refill tests here model atomic in-place writers like database#101's;
+they do not exercise main's read-modify-write API paths.
 
 ## Deliberately open
 
@@ -47,6 +69,12 @@ A lost reply is ambiguous; replay the same call with the same key to learn the s
   pricing versions are not stored here.
 - Reservations must be retained like charge receipts. A purge would let a
   recycled key hold capacity again, so the service role has no DELETE/TRUNCATE.
+  Its UPDATE grant covers only the closing columns (`state`, `credits_charged`,
+  `charge_event_id`, `closed_at`); owner, key and amount are immutable.
+- **No listing API for open holds.** A worker that loses its key leaves the hold open.
+  The service role can find open holds by reading `credit_reservations` where
+  `state = 'held'` (indexed by account, ordered by `created_at`) and then settle or
+  release them with the recorded key. An API or operator view is a later slice.
 
 ## Verification
 
@@ -56,14 +84,14 @@ Disposable cluster only (synthetic balances, Unix socket, no hosted credentials)
 python3 -m unittest discover -s tests -p 'test_credit_reservations.py'
 ```
 
-Eighteen tests cover holds without debit, 12-way concurrent reservations against
+Nineteen tests cover holds without debit, 12-way concurrent reservations against
 one balance, concurrent duplicate reservations and settlements, lost-reply replay,
 changed-input conflicts, settlement through the shared charge receipt, over-limit
 settlement, release and its state transitions, missing reservations, per-owner
-isolation, top-up concurrent with settlement, refill with an outstanding hold, legacy
-debit concurrency (documenting that it ignores holds), invalid inputs,
-missing/duplicate wallets, denied browser roles, denied service-role deletes and
-rollback. Locally passed on
+isolation, an atomic top-up concurrent with settlement, an atomic refill with an
+outstanding hold, legacy debit concurrency (documenting that it ignores holds),
+invalid inputs, missing/duplicate wallets, denied browser roles, denied service-role
+deletes and immutable hold columns, and rollback. Locally passed on
 PostgreSQL 15 and 17; CI runs 15 and 16. The fixture is the minimal legacy
 schema plus the actual charge-receipt migration, not a replay of every migration.
 

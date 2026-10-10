@@ -36,8 +36,13 @@ CREATE INDEX credit_reservations_open_idx
 ALTER TABLE public.credit_reservations ENABLE ROW LEVEL SECURITY;
 -- Retained like charge receipts: deleting a row would let a recycled key hold again,
 -- so the service role gets no DELETE/TRUNCATE even where default privileges grant it.
+-- UPDATE is limited to the columns settle/release close; a hold's owner, key and
+-- amount are immutable once written. The service role may read open holds
+-- (state = 'held', by account and created_at) to reconcile lost operation keys.
 REVOKE ALL ON public.credit_reservations FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT, INSERT, UPDATE ON public.credit_reservations TO service_role;
+GRANT SELECT, INSERT ON public.credit_reservations TO service_role;
+GRANT UPDATE (state, credits_charged, charge_event_id, closed_at)
+    ON public.credit_reservations TO service_role;
 
 CREATE OR REPLACE FUNCTION public.reserve_credits_once(
     p_account_id uuid, p_operation_key text, p_credits bigint

@@ -181,7 +181,10 @@ class CreditReservations(CreditChargeFixture):
         self.assertEqual(self.reserve(owner=other, key='work-2', credits=1)['state'], 'insufficient')
         self.assertIn('Credit reservation not found', self.failing(self.release_statement(owner=other, key='absent')))
 
-    def test_top_up_and_settlement_concurrently_both_survive(self):
+    def test_atomic_top_up_and_settlement_concurrently_both_survive(self):
+        # Models an in-place (atomic) top-up writer such as database#101's. Main's API
+        # top-up and refill still write an absolute balance read earlier, which can erase
+        # a settlement that commits in between; callers stay disconnected until that lands.
         self.reserve()
         top_up = (f"SET ROLE service_role; UPDATE credits_usage SET remaining_credits = remaining_credits + 500 "
                   f"WHERE account_id='{self.owner}'")
@@ -189,7 +192,8 @@ class CreditReservations(CreditChargeFixture):
             list(pool.map(self.sql, [top_up, self.settle_statement()]))
         self.assertEqual(self.balance(), 1380)
 
-    def test_refill_with_an_outstanding_hold_keeps_the_hold(self):
+    def test_atomic_refill_with_an_outstanding_hold_keeps_the_hold(self):
+        # Models an in-place refill to the plan floor (database#101), not main's API refill.
         self.sql(f"UPDATE credits_usage SET remaining_credits = 200 WHERE account_id='{self.owner}'")
         self.reserve(credits=150)
         self.sql(f"UPDATE credits_usage SET remaining_credits = GREATEST(remaining_credits, 1000) "
@@ -238,6 +242,19 @@ class CreditReservations(CreditChargeFixture):
         for statement in ['DELETE FROM credit_reservations;', 'TRUNCATE credit_reservations;']:
             self.assertIn('permission denied', self.failing(f'SET ROLE service_role; {statement}'))
         self.assertEqual(self.holds(), 300)
+
+    def test_service_role_cannot_rewrite_a_hold_owner_key_or_amount(self):
+        self.reserve()
+        for column, value in [('credits_held', '1'), ('account_id', f"'{uuid.uuid4()}'"),
+                              ('operation_key', "'other'"), ('id', f"'hold-v1-{'0' * 64}'"),
+                              ('created_at', 'now()')]:
+            self.assertIn('permission denied', self.failing(
+                f'SET ROLE service_role; UPDATE credit_reservations SET {column} = {value};'))
+        open_holds = self.sql(f"SET ROLE service_role; SELECT operation_key, credits_held FROM "
+                              f"credit_reservations WHERE account_id='{self.owner}' AND state='held' "
+                              f"ORDER BY created_at;").stdout.strip()
+        self.assertEqual(open_holds, 'work-1|300')
+        self.assertEqual(self.settle()['state'], 'settled')
 
     def test_transaction_rollback_leaves_no_hold_or_charge(self):
         self.sql('BEGIN;' + self.reserve_statement() + 'ROLLBACK;')
