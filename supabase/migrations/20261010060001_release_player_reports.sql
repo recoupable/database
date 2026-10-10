@@ -1,5 +1,5 @@
 -- Owner-scoped summary and a bounded page of fan-linked playback history.
-create function public.read_player_report(p_owner uuid,p_player uuid,p_offset integer default 0)
+create or replace function public.read_player_report(p_owner uuid,p_player uuid,p_offset integer default 0)
 returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare result jsonb;
 begin
