@@ -1,31 +1,37 @@
 -- Read-only identity-conflict inventory (recoupable/app#2117, child of #2116).
 --
--- One service-only, security-invoker, STABLE function that returns aggregate
--- counts for the identity-conflict classes the Context Engine must not inherit
--- silently: duplicated provider artist mappings, questionable name-keyed
--- associations, incomplete organization attachments, provider track values on
--- several recordings, and disagreements between accepted Context identities and
--- the legacy social links. It returns counts only: no account IDs, names, URLs,
--- ISRCs or provider IDs ever leave the database through this function.
+-- This is not a migration. It needs no schema change, no new grant and no write
+-- privilege, so a baseline can be taken before any identity constraint ships:
 --
--- It never writes. It adds no constraint, trigger, backfill, merge or cleanup;
--- enforcement and quarantine of each class stay with recoupable/app#2119.
--- Classes whose source tables are absent report status 'not_applicable', so the
--- function is safe on fresh preview environments and partial fixtures.
+--   psql "$READ_ONLY_DATABASE_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+--     -f supabase/audits/identity_conflict_inventory.sql
 --
--- Spotify artist IDs are case-sensitive. Extraction uses the exact, case-preserving
--- expression from onboard_spotify_artist (20261008040000), never lower(); the
--- 2026-07-29 cleanup grouped on lower(profile_url), so the lowercase-folded view
--- is reported as its own class instead of being mixed into the strict counts.
-begin;
+-- The script is one READ ONLY transaction that ends in ROLLBACK, so PostgreSQL
+-- itself refuses any write. A DO block computes aggregate counts and hands the
+-- report to the final SELECT through a transaction-local setting; that SELECT
+-- returns one jsonb row, which carries transaction_read_only = 'on' as proof.
+-- Counts only: no account IDs, names, URLs, ISRCs or provider IDs leave the
+-- database. Classes whose source tables are absent report 'not_applicable', so
+-- the script is also safe on fresh preview environments and partial fixtures.
+--
+-- Run it as a role that can SELECT the tables and bypasses row-level security
+-- (service_role or postgres on Supabase). Under RLS the counts would silently
+-- shrink, so the report states bypasses_row_security; a baseline is valid only
+-- when it is true.
+--
+-- It adds no constraint, trigger, backfill, merge or cleanup; enforcement and
+-- quarantine of each class stay with recoupable/app#2119.
+--
+-- Spotify artist IDs are case-sensitive. Extraction uses the exact,
+-- case-preserving expression from onboard_spotify_artist (20261008040000),
+-- never lower(); the 2026-07-29 cleanup grouped on lower(profile_url), so the
+-- lowercase-folded view is reported as its own class instead of being mixed
+-- into the strict counts.
+begin read only;
+set local search_path = '';
+set local statement_timeout = '120s';
 
-create or replace function public.read_context_identity_conflict_inventory()
-returns jsonb
-language plpgsql
-stable
-security invoker
-set search_path = ''
-as $$
+do $inventory$
 declare
   c_spotify_artist constant text :=
     '^(?:(?:https?://)?open[.]spotify[.]com/(?:intl-[a-z]{2}/)?artist/|spotify:artist:)([A-Za-z0-9]{22})(?:[/?#].*)?$';
@@ -40,24 +46,22 @@ declare
     and to_regclass('public.context_subjects') is not null
     and to_regclass('public.context_resource_links') is not null;
   v_has_song_identifiers boolean := to_regclass('public.song_identifiers') is not null;
-  v_has_dupe_manifest boolean := to_regclass('public.zz_dupe_manifest_20260729') is not null;
-  v_has_cleanup_manifest boolean := to_regclass('public.zz_cleanup_manifest_20260729b') is not null;
   a_count bigint := 0; a_rows bigint := 0; a_owners jsonb := to_jsonb('not_applicable'::text);
   b_count bigint := 0; b_rows bigint := 0;
   c_count bigint := 0; c_rows bigint := 0;
   c2_count bigint := 0; c2_rows bigint := 0;
   d1_count bigint := 0; d1_rows bigint := 0;
   d2_count bigint := 0; d2_rows bigint := 0;
-  d3_count bigint := 0; d3_rows bigint := 0;
+  d3_count bigint := 0; d3_rows bigint := 0; d3_id_side bigint := 0; d3_account_side bigint := 0;
   e_count bigint := 0; e_rows bigint := 0;
   f_count bigint := 0; f_rows bigint := 0;
   g_count bigint := 0; g_rows bigint := 0;
   g2_count bigint := 0; g2_rows bigint := 0;
   h_count bigint := 0; h_rows bigint := 0;
-  i_dupe bigint := 0; i_cleanup bigint := 0;
   v_owners bigint;
   m_count bigint; m_latest text;
   v_history jsonb;
+  v_bypasses_rls boolean;
   v_classes jsonb;
   v_findings integer;
 begin
@@ -116,7 +120,7 @@ begin
   -- (d1)-(e): Context identities. One accepted identity per resource is already
   -- enforced by the context_one_accepted_identity index, so the measurable
   -- classes are recorded conflicts, one artist subject accepted for several
-  -- resources, and accepted identities that disagree with legacy socials.
+  -- resources, and accepted identities compared with the legacy socials.
   if v_has_context then
     select count(distinct l.resource_id), count(*) into d1_count, d1_rows
     from public.context_resource_links l
@@ -133,6 +137,12 @@ begin
     )
     select count(*), coalesce(sum(links), 0)::bigint into d2_count, d2_rows from accepted;
 
+    -- Compare in both directions. Spotify-id side: the accepted id is linked to
+    -- an account other than the subject's, or to several accounts. Account side:
+    -- the subject's account carries Spotify artist socials, none of them the
+    -- accepted id (for example a social replaced after research). Only an
+    -- accepted identity with no legacy Spotify social on either side is the
+    -- benign attachment candidate (e).
     if v_has_socials then
       with accepted as (
         select r.id as resource_id, r.provider_id, s.artist_id
@@ -148,21 +158,41 @@ begin
         join public.account_socials ac on ac.social_id = so.id
         where substring(so.profile_url from c_spotify_artist) is not null
       ),
+      by_id as (
+        select spotify_id, count(*) as id_rows, count(distinct account_id) as id_accounts
+        from legacy group by spotify_id
+      ),
+      by_account as (
+        select account_id, count(*) as account_rows from legacy group by account_id
+      ),
+      pairs as (
+        select distinct spotify_id, account_id from legacy
+      ),
       compared as (
-        select a.resource_id,
-               count(lg.account_id) as legacy_rows,
-               count(distinct lg.account_id) as legacy_accounts,
-               coalesce(bool_or(lg.account_id = a.artist_id), false) as legacy_includes_subject
+        select coalesce(bi.id_rows, 0) as id_rows,
+               coalesce(bi.id_accounts, 0) as id_accounts,
+               coalesce(ba.account_rows, 0) as account_rows,
+               p.account_id is not null as id_names_subject
         from accepted a
-        left join legacy lg on lg.spotify_id = a.provider_id
-        group by a.resource_id, a.artist_id
+        left join by_id bi on bi.spotify_id = a.provider_id
+        left join by_account ba on ba.account_id = a.artist_id
+        left join pairs p on p.spotify_id = a.provider_id and p.account_id = a.artist_id
+      ),
+      sided as (
+        select id_rows, id_accounts, account_rows,
+               (id_accounts > 1 or (id_accounts = 1 and not id_names_subject)) as id_side,
+               (account_rows > 0 and not id_names_subject) as account_side
+        from compared
       )
-      select count(*) filter (where legacy_accounts > 1 or (legacy_accounts = 1 and not legacy_includes_subject)),
-             coalesce(sum(legacy_rows) filter (where legacy_accounts > 1 or (legacy_accounts = 1 and not legacy_includes_subject)), 0)::bigint,
-             count(*) filter (where legacy_accounts = 0),
-             count(*) filter (where legacy_accounts = 0)
-        into d3_count, d3_rows, e_count, e_rows
-      from compared;
+      select count(*) filter (where id_side or account_side),
+             coalesce(sum((case when id_side then id_rows else 0 end)
+                         + (case when account_side then account_rows else 0 end)), 0)::bigint,
+             count(*) filter (where id_side),
+             count(*) filter (where account_side),
+             count(*) filter (where id_accounts = 0 and account_rows = 0)
+        into d3_count, d3_rows, d3_id_side, d3_account_side, e_count
+      from sided;
+      e_rows := e_count;
     end if;
   end if;
 
@@ -224,14 +254,6 @@ begin
     select count(*), coalesce(sum(mapping_rows), 0)::bigint into h_count, h_rows from shared;
   end if;
 
-  -- (i): the one-off 2026-07-29 cleanup manifests, where they exist.
-  if v_has_dupe_manifest then
-    select count(*) into i_dupe from public.zz_dupe_manifest_20260729;
-  end if;
-  if v_has_cleanup_manifest then
-    select count(*) into i_cleanup from public.zz_cleanup_manifest_20260729b;
-  end if;
-
   -- Deployed migration history, when the invoker may read it. Even the name
   -- lookup needs USAGE on the schema, so the whole block reports 'denied'.
   begin
@@ -245,11 +267,14 @@ begin
     v_history := jsonb_build_object('status', 'denied');
   end;
 
+  select r.rolsuper or r.rolbypassrls into v_bypasses_rls
+  from pg_catalog.pg_roles r where r.rolname = current_user;
+
   v_classes := jsonb_build_object(
     'spotify_artist_ids_linked_to_multiple_accounts', jsonb_build_object(
       'status', case when v_has_socials then 'measured' else 'not_applicable' end,
       'count', a_count, 'affected_rows', a_rows, 'multiple_graph_owners', a_owners,
-      'rule', 'Each Spotify artist id resolves to one artist account. Existing duplicates are quarantined for human review; ids with several song_artists graph owners are never collapsed automatically. Enforcement is owned by recoupable/app#2119; onboarding and research already refuse ambiguous ids.'),
+      'rule', 'Each Spotify artist id resolves to one artist account. Existing duplicates are quarantined for human review; ids with several song_artists graph owners are never collapsed automatically. Enforcement is owned by recoupable/app#2119; onboarding and research already refuse ambiguous ids that have no accepted Context identity.'),
     'accounts_with_multiple_spotify_artist_socials', jsonb_build_object(
       'status', case when v_has_socials then 'measured' else 'not_applicable' end,
       'count', b_count, 'affected_rows', b_rows,
@@ -273,11 +298,12 @@ begin
     'context_accepted_artist_identities_disagreeing_with_legacy_socials', jsonb_build_object(
       'status', case when v_has_context and v_has_socials then 'measured' else 'not_applicable' end,
       'count', d3_count, 'affected_rows', d3_rows,
-      'rule', 'An accepted Context identity and the legacy social links for the same Spotify id must name the same single account. Disagreement blocks reuse of that identity until reviewed; neither side is rewritten automatically. Owned by recoupable/app#2119.'),
+      'spotify_id_side', d3_id_side, 'account_side', d3_account_side,
+      'rule', 'An accepted Context identity and the legacy socials must agree in both directions: the accepted Spotify id is linked to no account other than the subject account, and a subject account that carries Spotify artist socials carries the accepted id. Disagreement blocks reuse of that identity until reviewed; nothing is attached, replaced or rewritten automatically. Owned by recoupable/app#2119.'),
     'context_accepted_artist_identities_without_legacy_social', jsonb_build_object(
       'status', case when v_has_context and v_has_socials then 'measured' else 'not_applicable' end,
       'count', e_count, 'affected_rows', e_rows,
-      'rule', 'Not a defect: an accepted identity whose account has no legacy Spotify social is an attachment candidate for the explicit onboarding path. Nothing is attached without intent. Owned by recoupable/app#2119.'),
+      'rule', 'Not a defect: neither the accepted Spotify id nor the subject account has any legacy Spotify artist social, so the identity is an attachment candidate for the explicit onboarding path. Nothing is attached without intent. Owned by recoupable/app#2119.'),
     'name_only_artist_accounts_sharing_a_name', jsonb_build_object(
       'status', case when v_has_roster and v_has_socials then 'measured' else 'not_applicable' end,
       'count', f_count, 'affected_rows', f_rows,
@@ -293,32 +319,26 @@ begin
     'provider_track_values_mapped_to_multiple_songs', jsonb_build_object(
       'status', case when v_has_song_identifiers then 'measured' else 'not_applicable' end,
       'count', h_count, 'affected_rows', h_rows,
-      'rule', 'One provider track id maps to one ISRC. Existing multi-ISRC values are quarantined; research already refuses to attach such a track to a different ISRC. ISRCs are never invented or reassigned. Owned by recoupable/app#2119.'),
-    'legacy_cleanup_manifest_rows', jsonb_build_object(
-      'status', case when v_has_dupe_manifest or v_has_cleanup_manifest then 'present' else 'not_present' end,
-      'count', i_dupe + i_cleanup, 'affected_rows', i_dupe + i_cleanup,
-      'dupe_manifest_rows', i_dupe, 'cleanup_manifest_rows', i_cleanup,
-      'rule', 'The 2026-07-29 manifests are historical evidence of a one-off mutation and are kept read-only. They are not replayed, extended or used as a target list. Owned by recoupable/app#2119.')
+      'rule', 'One provider track id maps to one ISRC. Existing multi-ISRC values are quarantined; research already refuses to attach such a track to a different ISRC. ISRCs are never invented or reassigned. Owned by recoupable/app#2119.')
   );
 
   select count(*) into v_findings
   from jsonb_each(v_classes) c
   where (c.value ->> 'count')::bigint > 0;
 
-  return jsonb_build_object(
+  perform set_config('recoup.identity_conflict_inventory', jsonb_build_object(
     'inventory_version', 'identity-inventory-v1',
     'generated_at', now(),
     'mutations', 'none',
+    'transaction_read_only', current_setting('transaction_read_only'),
+    'bypasses_row_security', coalesce(v_bypasses_rls, false),
     'server_version', current_setting('server_version'),
     'migration_history', v_history,
     'classes_with_findings', v_findings,
-    'classes', v_classes);
+    'classes', v_classes)::text, true);
 end;
-$$;
+$inventory$;
 
-revoke all on function public.read_context_identity_conflict_inventory() from public, anon, authenticated;
-grant execute on function public.read_context_identity_conflict_inventory() to service_role;
-comment on function public.read_context_identity_conflict_inventory() is
-  'Service-only, read-only aggregate inventory of identity conflicts for recoupable/app#2117. Returns counts only and never writes.';
+select current_setting('recoup.identity_conflict_inventory')::jsonb as identity_conflict_inventory;
 
-commit;
+rollback;
