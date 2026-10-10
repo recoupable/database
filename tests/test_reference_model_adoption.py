@@ -16,11 +16,11 @@ MAP_PATH = pathlib.Path(__file__).with_name('reference_model_adoption.json')
 STATUSES = {'main_migration', 'open_pr', 'not_adopted'}
 RELATIONSHIPS = {'identity', 'recording_composition_release', 'roster_catalog', 'scoped_evidence'}
 DYNAMIC_CHECKS = {'check', 'column', 'foreign_key', 'references_only', 'no_unique_on', 'server_only'}
-STATIC_CHECKS = {'absent_table', 'absent_function', 'absent_column', 'suite'}
+ABSENCE_CHECKS = {'absent_table', 'absent_function', 'absent_column'}
 CHECKS_BY_STATUS = {
     'main_migration': DYNAMIC_CHECKS | {'behaviour', 'suite'},
-    'open_pr': {'absent_table', 'absent_function'},
-    'not_adopted': {'absent_table', 'absent_function', 'absent_column', 'behaviour'},
+    'open_pr': ABSENCE_CHECKS,
+    'not_adopted': ABSENCE_CHECKS | {'behaviour'},
 }
 TICKET = re.compile(r'^recoupable/app#\d+$')
 OPEN_PR = re.compile(r'^recoupable/database#\d+$')
@@ -179,21 +179,22 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
         if 'not_null' in check:
             self.assertEqual(nullable, 'NO' if check['not_null'] else 'YES')
 
-    def referenced_tables(self, table, column=None):
-        column_filter = ''
-        if column:
-            column_filter = (f" AND conkey=ARRAY[(SELECT attnum FROM pg_attribute "
-                             f"WHERE attrelid=c.conrelid AND attname='{column}')]::smallint[]")
+    def foreign_keys(self, table):
+        """Return {(ordered referencing columns, referenced table)} for one table."""
         result = self.scalar(
-            f"SELECT string_agg(DISTINCT r.relname,',') FROM pg_constraint c JOIN pg_class r ON r.oid=c.confrelid "
-            f"WHERE c.conrelid='public.{table}'::regclass AND c.contype='f'{column_filter}")
-        return set(filter(None, result.split(',')))
+            f"SELECT string_agg((SELECT string_agg(a.attname,',' ORDER BY k.n) FROM unnest(c.conkey) "
+            f"WITH ORDINALITY k(attnum,n) JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum)"
+            f"||'>'||r.relname,' ') FROM pg_constraint c JOIN pg_class r ON r.oid=c.confrelid "
+            f"WHERE c.conrelid='public.{table}'::regclass AND c.contype='f'")
+        return {(tuple(columns.split(',')), target)
+                for columns, target in (key.split('>') for key in result.split())}
 
     def verify_foreign_key(self, check):
-        self.assertIn(check['references'], self.referenced_tables(check['table'], check['column']))
+        # Exact column list, so a composite owner-scoped key cannot weaken to one column.
+        self.assertIn((tuple(check['columns']), check['references']), self.foreign_keys(check['table']))
 
     def verify_references_only(self, check):
-        self.assertEqual(self.referenced_tables(check['table']), set(check['tables']))
+        self.assertEqual({target for _, target in self.foreign_keys(check['table'])}, set(check['tables']))
 
     def verify_no_unique_on(self, check):
         count = self.scalar(
@@ -208,7 +209,7 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
                              't', f'{table} needs row level security')
             for role in ('anon', 'authenticated'):
                 granted = self.scalar(
-                    f"SELECT has_table_privilege('{role}','public.{table}','SELECT,INSERT,UPDATE,DELETE')")
+                    f"SELECT has_table_privilege('{role}','public.{table}','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')")
                 self.assertEqual(granted, 'f', f'{role} has access to {table}')
 
     # Proposed or open rows ------------------------------------------------------

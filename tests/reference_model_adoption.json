@@ -32,7 +32,7 @@
     "tickets": ["recoupable/app#2119"],
     "defined_by": ["20260920010000_context_foundation.sql"],
     "checks": [
-      {"kind": "foreign_key", "table": "context_subjects", "column": "artist_id", "references": "accounts"}
+      {"kind": "foreign_key", "table": "context_subjects", "columns": ["artist_id"], "references": "accounts"}
     ]
   },
   {
@@ -67,7 +67,7 @@
     "tickets": ["recoupable/app#2126"],
     "defined_by": ["20260920010000_context_foundation.sql", "20260925130000_context_supporting_text_entry.sql"],
     "checks": [
-      {"kind": "foreign_key", "table": "context_subjects", "column": "song_isrc", "references": "songs"},
+      {"kind": "foreign_key", "table": "context_subjects", "columns": ["song_isrc"], "references": "songs"},
       {"kind": "behaviour", "test": "test_recording_subject_requires_isrc"}
     ]
   },
@@ -124,7 +124,7 @@
     "tickets": ["recoupable/app#2139"],
     "defined_by": ["20260922070000_context_catalog_entry.sql"],
     "checks": [
-      {"kind": "foreign_key", "table": "context_subjects", "column": "catalog_id", "references": "catalogs"}
+      {"kind": "foreign_key", "table": "context_subjects", "columns": ["catalog_id"], "references": "catalogs"}
     ]
   },
   {
@@ -189,28 +189,32 @@
     "id": "owned-source-versions",
     "relationship": "scoped_evidence",
     "status": "main_migration",
-    "concept": "Evidence sources belong to one owner workspace; versions carry the owner in a composite key; withdrawal and removal are timestamps that preserve history.",
+    "concept": "Evidence sources belong to one owner workspace; versions and result lineage carry the owner in composite keys; withdrawal and removal are timestamps that preserve history.",
     "tickets": ["recoupable/app#2120", "recoupable/app#2121", "recoupable/app#2124"],
     "defined_by": ["20260920010000_context_foundation.sql"],
     "checks": [
       {"kind": "column", "table": "context_sources", "column": "owner_id", "not_null": true},
-      {"kind": "foreign_key", "table": "context_sources", "column": "owner_id", "references": "accounts"},
+      {"kind": "foreign_key", "table": "context_sources", "columns": ["owner_id"], "references": "accounts"},
       {"kind": "column", "table": "context_sources", "column": "withdrawn_at", "not_null": false},
       {"kind": "column", "table": "context_source_versions", "column": "owner_id", "not_null": true},
       {"kind": "column", "table": "context_source_versions", "column": "removed_at", "not_null": false},
-      {"kind": "references_only", "table": "context_source_versions", "tables": ["context_sources"]}
+      {"kind": "foreign_key", "table": "context_source_versions", "columns": ["source_id", "owner_id"], "references": "context_sources"},
+      {"kind": "references_only", "table": "context_source_versions", "tables": ["context_sources"]},
+      {"kind": "foreign_key", "table": "context_result_sources", "columns": ["result_id", "owner_id"], "references": "context_results"},
+      {"kind": "foreign_key", "table": "context_result_sources", "columns": ["source_version_id", "owner_id"], "references": "context_source_versions"}
     ]
   },
   {
     "id": "server-only-evidence-access",
     "relationship": "scoped_evidence",
     "status": "main_migration",
-    "concept": "Context evidence tables have row level security and no browser-role grants. Reads go through authenticated, membership-checked server operations.",
+    "concept": "Context evidence tables have row level security and no browser-role grants, so browser clients cannot read or change them directly. Workspace membership is checked by each server operation and tested in that operation's suite; the release-case suite named here runs inside this harness.",
     "tickets": ["recoupable/app#2120"],
     "defined_by": ["20260920010000_context_foundation.sql"],
     "checks": [
       {"kind": "server_only", "tables": ["context_resources", "context_subjects", "context_resource_links", "context_requests", "context_sources", "context_source_versions", "context_results", "context_result_sources", "context_documents"]},
-      {"kind": "behaviour", "test": "test_browser_roles_cannot_read_scoped_evidence"}
+      {"kind": "behaviour", "test": "test_browser_roles_cannot_read_scoped_evidence"},
+      {"kind": "suite", "file": "tests/test_release_cases.py"}
     ]
   },
   {
