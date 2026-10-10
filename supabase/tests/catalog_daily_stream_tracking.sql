@@ -16,7 +16,7 @@ begin
   if exists(select 1 from public.claim_catalog_stream_run(c,'2026-10-09')) then raise exception 'Duplicate claim'; end if;
   if not public.commit_catalog_stream_track(r.id,'USAAA2400001',result) then raise exception 'Commit failed'; end if;
   if (select count(*) from public.catalog_stream_observations where run_id=r.id) <> 62 then raise exception 'Missing-day preservation'; end if;
-  if (select streams from public.catalog_stream_observations where run_id=r.id and date='2026-10-07') <> 0 then raise exception 'Zero preservation'; end if;
+  if (select streams from public.catalog_stream_observations where run_id=r.id and date='2026-10-07') is distinct from 0 then raise exception 'Zero preservation'; end if;
   if (select streams from public.catalog_stream_observations where run_id=r.id and date='2026-10-05') is not null then raise exception 'Invented zero'; end if;
   perform public.commit_catalog_stream_track(r.id,'USAAA2400001',result);
   if (select count(*) from public.catalog_stream_observations where run_id=r.id) <> 62 then raise exception 'Retry duplicates'; end if;
@@ -25,7 +25,7 @@ begin
   if (select count(*) from public.catalog_stream_observations where run_id=r2.id) <> 3 then raise exception 'Unchanged days copied instead of reusing history'; end if;
   if (select streams from public.read_catalog_stream_days(c,'USAAA2400001','2026-10-06','2026-10-08') where date='2026-10-06') <> 2 then raise exception 'Correction lost'; end if;
   if (select streams from public.read_catalog_stream_days(c,'USAAA2400001','2026-10-06','2026-10-08') where date='2026-10-07') is not null then raise exception 'Old zero filled new missing date'; end if;
-  if (select streams from public.catalog_stream_observations where run_id=r.id and date='2026-10-06') <> 1 then raise exception 'Historical version overwritten'; end if;
+  if (select streams from public.catalog_stream_observations where run_id=r.id and date='2026-10-06') is distinct from 1 then raise exception 'Historical version overwritten'; end if;
   update public.catalog_stream_tracking set enabled=false where catalog_id=c;
   if public.commit_catalog_stream_track(r2.id,'USAAA2400001',result) then raise exception 'Disabled write'; end if;
   if exists(select 1 from public.claim_catalog_stream_run(c,'2026-10-11')) then raise exception 'Disabled claim'; end if;

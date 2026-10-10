@@ -2,7 +2,15 @@
 set -euo pipefail
 # Always use a new disposable cluster; never read DATABASE_URL.
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-pg_bin="${PG_BINDIR:-/opt/homebrew/opt/postgresql@17/bin}"
+if [[ -n "${PG_BINDIR:-}" ]]; then
+  pg_bin="$PG_BINDIR"
+elif command -v initdb >/dev/null; then
+  pg_bin="$(dirname "$(command -v initdb)")"
+elif command -v pg_config >/dev/null; then
+  pg_bin="$(pg_config --bindir)"
+else
+  pg_bin="/opt/homebrew/opt/postgresql@17/bin"
+fi
 cluster_root="$(mktemp -d /tmp/recoup-streams-pg.XXXXXX)"
 cleanup() {
   "$pg_bin/pg_ctl" -D "$cluster_root/data" -m immediate stop >/dev/null 2>&1 || true
@@ -25,5 +33,38 @@ create table public.catalog_songs(song text,catalog uuid);
 grant all on public.accounts, public.catalogs, public.songs, public.account_catalogs, public.catalog_songs to service_role;
 SQL
 "$pg_bin/psql" "${args[@]}" -f "$repo_root/supabase/migrations/20261009193000_catalog_daily_stream_tracking.sql" >/dev/null
+"$pg_bin/psql" "${args[@]}" -f "$repo_root/supabase/migrations/20261010035000_catalog_stream_membership_locks.sql" >/dev/null
 "$pg_bin/psql" "${args[@]}" -f "$repo_root/supabase/tests/catalog_daily_stream_tracking.sql"
+# Exercise real concurrent deletion against membership rows held by a commit.
+"$pg_bin/psql" "${args[@]}" >/dev/null <<'SQL'
+insert into accounts values ('10000000-0000-4000-8000-000000000001');
+insert into catalogs values ('10000000-0000-4000-8000-000000000002');
+insert into songs values ('USAAA2400001');
+insert into account_catalogs values ('10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002');
+insert into catalog_songs values ('USAAA2400001','10000000-0000-4000-8000-000000000002');
+insert into catalog_stream_tracking(catalog_id,owner_id,enabled) values ('10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001',true);
+select * from claim_catalog_stream_run('10000000-0000-4000-8000-000000000002',current_date);
+SQL
+"$pg_bin/psql" "${args[@]}" >"$cluster_root/lock-holder.log" 2>&1 <<'SQL' &
+begin;
+select commit_catalog_stream_track((select id from catalog_stream_runs limit 1),'USAAA2400001','{"state":"unavailable"}'::jsonb);
+\echo LOCKS_HELD
+select pg_sleep(3);
+rollback;
+SQL
+holder_pid=$!
+for attempt in {1..100}; do
+  if rg -q LOCKS_HELD "$cluster_root/lock-holder.log"; then break; fi
+  sleep 0.02
+done
+rg -q LOCKS_HELD "$cluster_root/lock-holder.log"
+for table_name in account_catalogs catalog_songs; do
+  if "$pg_bin/psql" "${args[@]}" -c "set statement_timeout='300ms'; delete from public.$table_name;" >"$cluster_root/delete.log" 2>&1; then
+    printf 'Concurrent membership deletion escaped commit fence.\n' >&2
+    exit 1
+  fi
+  rg -q 'statement timeout' "$cluster_root/delete.log"
+done
+wait "$holder_pid"
+
 printf 'Catalog stream storage checks passed.\n'
