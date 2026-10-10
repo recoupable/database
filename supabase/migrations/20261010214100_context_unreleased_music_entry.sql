@@ -201,8 +201,16 @@ begin
  -- References are checked only when the request is first saved, so an identical replay returns
  -- the saved request even after a referenced recording is withdrawn. Each recording must be
  -- saved evidence in this workspace: an internal unreleased recording or an ISRC-backed
- -- recording with a current, non-withdrawn accepted document.
+ -- recording with a current, non-withdrawn accepted document. Its sources and versions are
+ -- share-locked (as accept_context_result does) so a concurrent withdrawal waits for this save.
  for recording_id in select (value#>>'{}')::uuid from jsonb_array_elements(recordings) loop
+  perform 1 from public.context_documents d
+   join public.context_results r on r.id=d.current_result_id and r.owner_id=p_owner
+   join public.context_result_sources rs on rs.result_id=r.id and rs.owner_id=p_owner
+   join public.context_source_versions v on v.id=rs.source_version_id and v.owner_id=p_owner
+   join public.context_sources src on src.id=v.source_id and src.owner_id=p_owner
+   where d.subject_id=recording_id and d.owner_id=p_owner
+   order by src.id,v.id for share of src,v;
   if not exists(
    select 1 from public.context_subjects s
    join public.context_documents d on d.subject_id=s.id and d.owner_id=p_owner
