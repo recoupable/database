@@ -23,7 +23,7 @@ begin
   select * into r2 from public.claim_catalog_stream_run(c,'2026-10-10');
   perform public.commit_catalog_stream_track(r2.id,'USAAA2400001',jsonb_set(jsonb_set(result,'{retrieved_at}','"2026-10-10T09:00:00Z"'),'{days}','[{"date":"2026-10-06","streams":2}]'));
   if (select count(*) from public.catalog_stream_observations where run_id=r2.id) <> 3 then raise exception 'Unchanged days copied instead of reusing history'; end if;
-  if (select streams from public.read_catalog_stream_days(c,'USAAA2400001','2026-10-06','2026-10-08') where date='2026-10-06') <> 2 then raise exception 'Correction lost'; end if;
+  if (select streams from public.read_catalog_stream_days(c,'USAAA2400001','2026-10-06','2026-10-08') where date='2026-10-06') is distinct from 2 then raise exception 'Correction lost'; end if;
   if (select streams from public.read_catalog_stream_days(c,'USAAA2400001','2026-10-06','2026-10-08') where date='2026-10-07') is not null then raise exception 'Old zero filled new missing date'; end if;
   if (select streams from public.catalog_stream_observations where run_id=r.id and date='2026-10-06') is distinct from 1 then raise exception 'Historical version overwritten'; end if;
   update public.catalog_stream_tracking set enabled=false where catalog_id=c;
