@@ -59,10 +59,11 @@ class CompanyRelationships(release_cases.ReleaseCases):
         return request['output']['subjectIds'][0]
 
     def record_statement(self, counterparty, kind='frontline_roster', status='current', started=None, ended=None,
-                         note='', key=None, actor=None, owner=None, company=None):
+                         note='', key=None, actor=None, owner=None, company=None, supersedes=None):
         return (f"SELECT record_context_company_relationship({quoted(actor or self.actor)},{quoted(owner or self.org)},"
                 f"{quoted(company or self.company)},{quoted(json.dumps(counterparty))},{quoted(kind)},{quoted(status)},"
-                f"{quoted(started)},{quoted(ended)},{quoted(note)},{quoted(key or uuid.uuid4())});")
+                f"{quoted(started)},{quoted(ended)},{quoted(note)},{quoted(key or uuid.uuid4())}"
+                + (f",{quoted(supersedes)}" if supersedes else '') + ');')
 
     def record(self, counterparty, **kwargs):
         return self.call(self.record_statement(counterparty, **kwargs))
@@ -70,6 +71,18 @@ class CompanyRelationships(release_cases.ReleaseCases):
     def listing(self, after=None, actor=None, owner=None, company=None, role='service_role'):
         return self.call(f"SELECT list_context_company_relationships({quoted(actor or self.actor)},"
                          f"{quoted(owner or self.org)},{quoted(company or self.company)},{quoted(after)});", role)
+
+    def withdraw_company_source(self, owner, company):
+        source = self.sql(f"""SELECT DISTINCT v.source_id FROM context_documents d
+          JOIN context_result_sources rs ON rs.result_id=d.current_result_id AND rs.owner_id=d.owner_id
+          JOIN context_source_versions v ON v.id=rs.source_version_id AND v.owner_id=rs.owner_id
+          WHERE d.owner_id='{owner}' AND d.subject_id='{company}' AND d.topic='company_input'""").stdout.split()
+        self.assertEqual(len(source), 1)
+        # The real lifecycle primitive: it withdraws the results and clears current_result_id.
+        self.assertEqual(self.sql(f"SET ROLE service_role; SELECT withdraw_context_source('{owner}','{source[0]}')")
+                         .stdout.strip().splitlines()[-1], 't')
+        self.assertEqual(self.sql(f"""SELECT count(*) FROM context_documents WHERE owner_id='{owner}'
+          AND subject_id='{company}' AND topic='company_input' AND current_result_id IS NULL""").stdout.strip(), '1')
 
     def count(self, table, column, owner=None):
         return int(self.sql(f"SELECT count(*) FROM {table} WHERE {column}='{owner or self.org}'").stdout.strip())
@@ -109,11 +122,67 @@ class CompanyRelationships(release_cases.ReleaseCases):
         self.assertEqual(sorted((item['relationship_kind'], item['status']) for item in page['items']),
                          [('catalog_interest', 'current'), ('frontline_roster', 'current'), ('frontline_roster', 'former')])
         self.assertTrue(all(item['counterparty'] == artist and item['basis'] == 'operator_assertion'
-                            and item['asserted_by'] == self.actor for item in page['items']))
+                            and item['asserted_by'] == self.actor and item['supersedes_id'] is None
+                            and item['superseded_by'] is None for item in page['items']))
         self.assertIsNone(page['next_id'])
         # Assertions grant nothing: roster, membership and personal artist links are untouched.
         self.assertEqual(self.scope_counts(), {**before, 'relationships': 3})
         self.assertNotIn('ownership', json.dumps(page['items']))
+
+    def test_leaving_the_roster_supersedes_the_current_row_without_rewriting_it(self):
+        artist = {'kind': 'artist_account', 'artist_id': self.artist}
+        current = self.record(artist, started='2021-01-15', key='roster-current')['relationship']
+        interest = self.record(artist, kind='catalog_interest', key='catalog-interest')['relationship']
+        left = self.record(artist, status='former', started='2021-01-15', ended='2024-06-30', note='Left the roster',
+                           key='roster-left', supersedes=current['id'])
+        self.assertEqual(left['relationship']['supersedes_id'], current['id'])
+        self.assertIsNone(left['relationship']['superseded_by'])
+        items = {item['id']: item for item in self.listing()['items']}
+        # The earlier row stays as history, unchanged, and now names the row that replaced it.
+        self.assertEqual(items[current['id']], {**current, 'superseded_by': left['relationship']['id']})
+        self.assertEqual(items[interest['id']], interest)
+        in_force = sorted((item['relationship_kind'], item['status']) for item in items.values()
+                          if item['superseded_by'] is None)
+        self.assertEqual(in_force, [('catalog_interest', 'current'), ('frontline_roster', 'former')])
+        again = self.record(artist, status='former', started='2021-01-15', ended='2024-06-30', note='Left the roster',
+                            key='roster-left', supersedes=current['id'])
+        self.assertIs(again['replayed'], True)
+        self.assertEqual(again['relationship'], left['relationship'])
+        with self.assertRaisesRegex(AssertionError, 'Idempotency key already used for different input'):
+            self.record(artist, status='former', started='2021-01-15', ended='2024-06-30', note='Left the roster',
+                        key='roster-left')
+        with self.assertRaisesRegex(AssertionError, 'Company relationship already superseded'):
+            self.record(artist, status='former', ended='2024-07-01', key='roster-left-again', supersedes=current['id'])
+        foreign_company = self.company_subject(self.other_org, self.other_actor, 'Other label', 'company-supersede')
+        foreign = self.record({'kind': 'workspace'}, actor=self.other_actor, owner=self.other_org,
+                              company=foreign_company, key='foreign')['relationship']['id']
+        other_company = self.company_subject(self.org, self.actor, 'Second label', 'company-second')
+        elsewhere = self.record(artist, company=other_company, key='elsewhere')['relationship']['id']
+        # Unknown, foreign, other-company, other-counterparty and other-kind rows share one rejection.
+        for target, changes in [(str(uuid.uuid4()), {}), (foreign, {}), (elsewhere, {}),
+                                (interest['id'], {}), (current['id'], {'kind': 'catalog_interest'}),
+                                (interest['id'], {'counterparty': {'kind': 'workspace'}})]:
+            with self.assertRaisesRegex(AssertionError, 'Invalid superseded relationship'):
+                self.record(changes.get('counterparty', artist), kind=changes.get('kind', 'frontline_roster'),
+                            status='former', supersedes=target)
+        self.assertEqual(self.count('context_company_relationships', 'owner_id'), 4)
+
+    def test_parallel_supersessions_of_one_row_keep_a_single_successor(self):
+        artist = {'kind': 'artist_account', 'artist_id': self.artist}
+        current = self.record(artist, key='roster-current')['relationship']['id']
+
+        def supersede(n):
+            try:
+                return self.record(artist, status='former', key=f'left-{n}', supersedes=current)
+            except AssertionError as error:
+                self.assertIn('Company relationship already superseded', str(error))
+                return None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            results = [result for result in pool.map(supersede, range(8)) if result]
+        self.assertEqual(len(results), 1)
+        successors = self.sql(f"""SELECT count(*) FROM context_company_relationships
+          WHERE supersedes_id='{current}'""").stdout.strip()
+        self.assertEqual(successors, '1')
 
     def test_workspace_and_professional_counterparties_stay_inside_the_workspace(self):
         own = self.record({'kind': 'workspace'}, kind='distribution', key='distribution')
@@ -190,7 +259,7 @@ class CompanyRelationships(release_cases.ReleaseCases):
     def test_withdrawn_company_source_withholds_list_and_blocks_new_assertions(self):
         self.record({'kind': 'workspace'}, key='before-withdrawal')
         self.assertEqual(len(self.listing()['items']), 1)
-        self.sql(f"UPDATE context_sources SET withdrawn_at=now() WHERE owner_id='{self.org}' AND kind='customer'")
+        self.withdraw_company_source(self.org, self.company)
         page = self.listing()
         self.assertEqual(page['state'], 'unavailable')
         self.assertEqual(page['items'], [])
@@ -199,6 +268,14 @@ class CompanyRelationships(release_cases.ReleaseCases):
         with self.assertRaisesRegex(AssertionError, 'Company source withdrawn'):
             self.record({'kind': 'workspace'}, key='after-withdrawal')
         self.assertEqual(self.count('context_company_relationships', 'owner_id'), 1)
+        # Another workspace's withdrawn company stays indistinguishable from an unknown one.
+        foreign_company = self.company_subject(self.other_org, self.other_actor, 'Withdrawn other', 'company-gone')
+        self.withdraw_company_source(self.other_org, foreign_company)
+        for company in (foreign_company, str(uuid.uuid4())):
+            with self.assertRaisesRegex(AssertionError, 'Company relationship denied'):
+                self.listing(company=company)
+            with self.assertRaisesRegex(AssertionError, 'Company relationship denied'):
+                self.record({'kind': 'workspace'}, company=company)
 
     def test_invalid_input_is_rejected_before_storage(self):
         artist = {'kind': 'artist_account', 'artist_id': self.artist}
