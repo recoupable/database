@@ -2,13 +2,13 @@
 do $$
 declare owner uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid(); artist uuid:=gen_random_uuid();
  other_artist uuid:=gen_random_uuid(); release_resource uuid; artist_subject uuid; release_subject uuid;
- outsider_subject uuid; saved_request uuid; cancelled_request uuid; outsider_request uuid;
+ outsider_subject uuid; saved_request uuid; cancelled_request uuid; outsider_request uuid; completed_request uuid;
  campaign_target jsonb; campaign_subject uuid; req jsonb; target jsonb; legacy jsonb; replay jsonb;
  saved public.context_results; resource public.context_resources; invalid jsonb;
  requests_before bigint; resources_before bigint; legacy_resource uuid; legacy_request uuid;
  legacy_normalized jsonb; legacy_hash text; opaque text; fingerprint text;
  base jsonb:='{"name":"  Catalogue   campaign ","goal":"Promote the back catalogue","audience":"Lapsed listeners","start_date":"2026-11-01","end_date":"2026-11-30"}'::jsonb;
- linked jsonb; brief jsonb;
+ linked jsonb; brief jsonb; completed_brief jsonb; completed jsonb;
 begin
  fingerprint:=encode(sha256(convert_to('fixture-request','UTF8')),'hex');
  insert into public.accounts(id,name) values(owner,'Campaign links fixture'),(outsider,'Other fixture'),
@@ -26,6 +26,9 @@ begin
  insert into public.context_requests(owner_id,created_by,resource_id,idempotency_key,input_fingerprint,input,status,output)
   values(owner,owner,release_resource,'cancelled-release',fingerprint,'{"kind":"release"}','cancelled',
    jsonb_build_object('subjectIds',jsonb_build_array(release_subject))) returning id into cancelled_request;
+ insert into public.context_requests(owner_id,created_by,resource_id,idempotency_key,input_fingerprint,input,status,output)
+  values(owner,owner,release_resource,'completed-release',fingerprint,'{"kind":"release"}','completed',
+   jsonb_build_object('subjectIds',jsonb_build_array(release_subject),'gaps','[]'::jsonb)) returning id into completed_request;
  -- Another workspace saved its own artist and the same global release.
  insert into public.context_subjects(kind,artist_id) values('artist',other_artist) returning id into outsider_subject;
  insert into public.context_requests(owner_id,created_by,resource_id,idempotency_key,input_fingerprint,input,status,output)
@@ -146,6 +149,32 @@ begin
  if (select count(*) from public.context_requests where owner_id=owner)<>requests_before
   or (select count(*) from public.context_resources where resource_kind='campaign_input')<>resources_before
  then raise exception 'Rejected brief left partial rows behind'; end if;
+
+ -- A completed request is a valid target. Once saved, a retry under the same key returns the stored brief
+ -- even after that target request is cancelled; a new key re-checks every target and rejects it.
+ completed_brief:=base||jsonb_build_object('promoted',jsonb_build_array(
+  jsonb_build_object('request_id',completed_request,'subject_id',release_subject)));
+ completed:=public.create_context_campaign_brief_request(owner,owner,completed_brief,'campaign-completed-target');
+ if completed->>'status'<>'partial' or completed->'input'->'brief'->'promoted'->0<>jsonb_build_object(
+  'request_id',completed_request,'subject_id',release_subject,'kind','release','assertion','promoted_candidate','ownership_verified',false)
+ then raise exception 'Completed target was not linked as an unverified candidate'; end if;
+ update public.context_requests set status='cancelled' where id=completed_request;
+ if (public.create_context_campaign_brief_request(owner,owner,completed_brief,'campaign-completed-target')->>'id')<>completed->>'id'
+ then raise exception 'Saved linked brief did not replay after its target was cancelled'; end if;
+ begin
+  perform public.create_context_campaign_brief_request(owner,owner,completed_brief,'campaign-completed-new-key');
+  raise exception 'TEST_FAILURE: cancelled target accepted under a new key';
+ exception when others then
+  if SQLERRM like 'TEST_FAILURE:%' or SQLERRM<>'Invalid promoted subject' then raise; end if;
+ end;
+ begin
+  perform public.create_context_campaign_brief_request(owner,owner,
+   base||jsonb_build_object('promoted',jsonb_build_array(jsonb_build_object('request_id',completed_request,'subject_id',release_subject),
+    jsonb_build_object('request_id',saved_request,'subject_id',artist_subject))),'campaign-completed-target');
+  raise exception 'TEST_FAILURE: an added link reused the key';
+ exception when others then
+  if SQLERRM like 'TEST_FAILURE:%' or SQLERRM<>'Idempotency key already used for different input' then raise; end if;
+ end;
 
  -- Briefs without links keep the original fingerprint and report the missing links explicitly.
  legacy:=public.create_context_campaign_brief_request(owner,owner,base,'campaign-unlinked');

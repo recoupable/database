@@ -10,7 +10,7 @@ declare normalized jsonb; name_text text; goal_text text; audience_text text; st
  fingerprint_version text; gaps jsonb;
  input_hash text; opaque text; uri text; resource uuid; subject uuid; req public.context_requests;
  source uuid; source_version uuid; document public.context_documents; attempt_key uuid; result uuid;
- snapshot jsonb; snapshot_hash text;
+ snapshot jsonb; snapshot_hash text; stored public.context_requests; stored_links jsonb:='[]';
 begin
  -- Null-safe type checks: a missing brief, name, goal or link id must fail closed, not compare as NULL.
  if jsonb_typeof(p_brief) is distinct from 'object' or exists(
@@ -43,7 +43,8 @@ begin
    channel_text:=channel#>>'{}';
    if channel_text ~ '[[:cntrl:]]' then raise exception 'Invalid campaign brief'; end if;
    channel_text:=pg_catalog.btrim(pg_catalog.regexp_replace(channel_text,'[[:space:]]+',' ','g'));
-   -- Rejects URLs, URI schemes (mailto:, spotify:, file:), drive letters and paths; "X" is a valid channel.
+   -- Rejects obvious links: scheme URLs, URI schemes (mailto:, spotify:, file:), www. hosts, and absolute,
+   -- home or drive paths. Not a full URL or file detector; names are never fetched. "X" is a valid channel.
    if length(channel_text) not between 1 and 60
     or channel_text ~* '(://|^(www\.|/|\\|~/)|^[a-z][a-z0-9+.-]*:[^[:space:]])'
     or exists(select 1 from jsonb_array_elements_text(channels) as existing(name) where lower(existing.name)=lower(channel_text))
@@ -56,6 +57,12 @@ begin
  if p_brief ? 'promoted' then
   if jsonb_typeof(p_brief->'promoted')<>'array' or jsonb_array_length(p_brief->'promoted')>20
   then raise exception 'Invalid campaign brief'; end if;
+  -- A retry of a brief already saved under this key replays its stored links, even if a target request
+  -- was cancelled since; the fingerprint check below still rejects any changed brief. New keys re-check.
+  select * into stored from public.context_requests where owner_id=p_owner and idempotency_key=p_key;
+  if stored.status in ('completed','partial','cancelled')
+   and jsonb_typeof(stored.input->'brief'->'promoted') is not distinct from 'array'
+  then stored_links:=stored.input->'brief'->'promoted'; end if;
   for link in select value from jsonb_array_elements(p_brief->'promoted') loop
    if jsonb_typeof(link)<>'object'
     or exists(select 1 from jsonb_object_keys(link) as field(key) where field.key not in ('request_id','subject_id'))
@@ -65,10 +72,14 @@ begin
     or exists(select 1 from jsonb_array_elements(promoted) as existing(entry)
      where existing.entry->>'request_id'=lower(link->>'request_id') and existing.entry->>'subject_id'=lower(link->>'subject_id'))
    then raise exception 'Invalid campaign brief'; end if;
-   select s.kind into link_kind from public.context_requests r
-   join public.context_subjects s on s.id=(link->>'subject_id')::uuid
-   where r.id=(link->>'request_id')::uuid and r.owner_id=p_owner and r.status in ('partial','completed')
-    and r.output->'subjectIds' ? s.id::text and s.kind in ('artist','recording','release','catalog');
+   select existing.entry->>'kind' into link_kind from jsonb_array_elements(stored_links) as existing(entry)
+   where existing.entry->>'request_id'=lower(link->>'request_id') and existing.entry->>'subject_id'=lower(link->>'subject_id');
+   if link_kind is null then
+    select s.kind into link_kind from public.context_requests r
+    join public.context_subjects s on s.id=(link->>'subject_id')::uuid
+    where r.id=(link->>'request_id')::uuid and r.owner_id=p_owner and r.status in ('partial','completed')
+     and r.output->'subjectIds' ? s.id::text and s.kind in ('artist','recording','release','catalog');
+   end if;
    if link_kind is null then raise exception 'Invalid promoted subject'; end if;
    promoted:=promoted||jsonb_build_object('request_id',(link->>'request_id')::uuid,'subject_id',(link->>'subject_id')::uuid,
     'kind',link_kind,'assertion','promoted_candidate','ownership_verified',false);
