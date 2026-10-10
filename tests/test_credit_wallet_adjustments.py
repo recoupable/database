@@ -26,8 +26,10 @@ class CreditWalletAdjustments(CreditChargeFixture):
         self.sql(f"INSERT INTO credits_usage(account_id,remaining_credits,\"timestamp\") "
                  f"VALUES ('{self.owner}',{balance},'{SEED_STAMP}')")
 
-    def refill_statement(self, floor=1000, role='service_role'):
-        return f"SET ROLE {role}; SELECT public.refill_credits_to_floor('{self.owner}', {floor});"
+    def refill_statement(self, floor=1000, role='service_role', expected=SEED_STAMP):
+        # `expected` is the refill timestamp the caller observed when it decided a refill was due.
+        return (f"SET ROLE {role}; SELECT public.refill_credits_to_floor("
+                f"'{self.owner}', {floor}, '{expected}'::timestamp);")
 
     def increment_statement(self, delta=100, role='service_role'):
         return f"SET ROLE {role}; SELECT public.increment_credits_atomic('{self.owner}', {delta});"
@@ -41,6 +43,10 @@ class CreditWalletAdjustments(CreditChargeFixture):
 
     def increment(self, **kwargs):
         return json.loads(self.sql(self.increment_statement(**kwargs)).stdout)
+
+    def debit(self, amount):
+        self.sql(f"SET ROLE service_role; SELECT deduct_credits_with_audit("
+                 f"'{self.owner}',{amount}::bigint,'debit-{uuid.uuid4()}','{{}}'::jsonb)")
 
     def wallet(self):
         out = self.sql(f"SELECT remaining_credits, \"timestamp\" FROM credits_usage "
@@ -78,8 +84,36 @@ class CreditWalletAdjustments(CreditChargeFixture):
         self.assertEqual(balance, 1500)
         self.assertGreater(stamp, SEED_STAMP)
 
-        self.sql(f"UPDATE credits_usage SET remaining_credits=1000 WHERE account_id='{self.owner}'")
+        self.sql(f"UPDATE credits_usage SET remaining_credits=1000, \"timestamp\"='{SEED_STAMP}' "
+                 f"WHERE account_id='{self.owner}'")
         self.assertEqual(self.refill(floor=1000)['state'], 'unchanged')
+        self.assertEqual(self.wallet()[0], 1000)
+
+    def test_second_refill_for_the_same_period_does_not_resurrect_a_debit(self):
+        # Two callers read the same stale timestamp and both decide a refill is due.
+        self.seed(300)
+        first = self.refill(floor=1000)
+        self.assertEqual((first['state'], first['remainingCredits']), ('raised', 1000))
+        refilled = self.wallet()
+        self.debit(200)
+        late = self.refill(floor=1000)  # still carries the timestamp read before the first refill
+        self.assertEqual((late['state'], late['remainingCredits']), ('superseded', 800))
+        self.assertEqual(late['timestamp'].replace('T', ' '), refilled[1])
+        self.assertEqual(self.wallet(), (800, refilled[1]))
+
+        # A refill that observed the current timestamp, as PostgREST serializes it
+        # (to_json, microseconds included), is a genuinely new period and applies.
+        observed = json.loads(self.sql(f"SELECT to_json(\"timestamp\") FROM credits_usage "
+                                       f"WHERE account_id='{self.owner}'").stdout)
+        self.assertEqual(self.refill(floor=1000, expected=observed)['state'], 'raised')
+        self.assertEqual(self.wallet()[0], 1000)
+
+    def test_concurrent_refills_for_the_same_period_apply_once(self):
+        self.seed(300)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            receipts = list(pool.map(lambda _: self.refill(floor=1000), range(6)))
+        self.assertEqual(sorted(r['state'] for r in receipts), ['raised'] + ['superseded'] * 5)
+        self.assertEqual(len({r['timestamp'] for r in receipts}), 1)
         self.assertEqual(self.wallet()[0], 1000)
 
     def test_refill_blocked_by_an_open_top_up_keeps_the_top_up(self):
@@ -136,7 +170,8 @@ class CreditWalletAdjustments(CreditChargeFixture):
         cases = [self.refill_statement(floor=-1), self.refill_statement(floor=9007199254740992),
                  self.increment_statement(delta=0), self.increment_statement(delta=-5),
                  self.increment_statement(delta=9007199254740992),
-                 "SET ROLE service_role; SELECT public.refill_credits_to_floor(NULL::uuid, 1000);",
+                 f"SET ROLE service_role; SELECT public.refill_credits_to_floor('{self.owner}', 1000, NULL);",
+                 f"SET ROLE service_role; SELECT public.refill_credits_to_floor(NULL::uuid, 1000, '{SEED_STAMP}');",
                  "SET ROLE service_role; SELECT public.increment_credits_atomic(NULL::uuid, 100);"]
         for statement in cases:
             stderr = self.failing(statement)

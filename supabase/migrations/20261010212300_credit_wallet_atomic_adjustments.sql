@@ -1,8 +1,11 @@
 -- Atomic writers for the two legacy wallet paths that still wrote a balance
 -- read earlier: the monthly plan refill (absolute write) and the Stripe credit
 -- top-up (read-modify-write). Each function locks the single wallet row and
--- applies its change inside the UPDATE itself, so a concurrent debit, top-up or
--- grant can never be overwritten or resurrected.
+-- applies its change inside the UPDATE itself, so a concurrent atomic debit,
+-- top-up or grant is never overwritten. The refill also re-checks, under the lock,
+-- that the refill timestamp the caller observed is still current, so two callers
+-- that read the same stale row refill once and a debit in between stays spent.
+-- (The API's unaudited deductCredits read-modify-write is a separate known gap.)
 --
 -- Not a reservation, hold, settlement, ceiling, price or spending
 -- authorization. No usage event is written, no auto-top-up column is touched,
@@ -10,14 +13,15 @@
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.refill_credits_to_floor(
-    p_account_id uuid, p_floor bigint
+    p_account_id uuid, p_floor bigint, p_expected_timestamp timestamp
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
 DECLARE
     v_wallet public.credits_usage%ROWTYPE;
     v_before bigint;
 BEGIN
-    IF p_account_id IS NULL OR p_floor IS NULL OR p_floor < 0 OR p_floor > 9007199254740991 THEN
+    IF p_account_id IS NULL OR p_floor IS NULL OR p_floor < 0 OR p_floor > 9007199254740991
+       OR p_expected_timestamp IS NULL THEN
         RAISE EXCEPTION 'Invalid credit refill' USING ERRCODE = '22023';
     END IF;
     -- The lock serializes with charge receipts, legacy debits and top-ups on this row.
@@ -29,6 +33,15 @@ BEGIN
     END;
     IF v_wallet.remaining_credits IS NULL THEN
         RAISE EXCEPTION 'Credit wallet is unavailable' USING ERRCODE = '22023';
+    END IF;
+    -- The caller decided a refill was due from the timestamp it read. If another
+    -- refill (or a grant, which restarts the clock) has moved it since, this period
+    -- is already settled: report the current balance and change nothing.
+    IF v_wallet."timestamp" IS DISTINCT FROM p_expected_timestamp THEN
+        RETURN jsonb_build_object(
+            'state', 'superseded',
+            'remainingCredits', v_wallet.remaining_credits,
+            'timestamp', v_wallet."timestamp");
     END IF;
     v_before := v_wallet.remaining_credits;
     -- The floor is applied here, never from a value the caller read earlier. The
@@ -75,9 +88,9 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.refill_credits_to_floor(uuid,bigint)
+REVOKE ALL ON FUNCTION public.refill_credits_to_floor(uuid,bigint,timestamp)
     FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.refill_credits_to_floor(uuid,bigint) TO service_role;
+GRANT EXECUTE ON FUNCTION public.refill_credits_to_floor(uuid,bigint,timestamp) TO service_role;
 REVOKE ALL ON FUNCTION public.increment_credits_atomic(uuid,bigint)
     FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.increment_credits_atomic(uuid,bigint) TO service_role;
