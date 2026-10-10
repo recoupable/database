@@ -67,18 +67,20 @@ class ContextVideoEntry(unittest.TestCase):
         fixture = (ROOT / 'supabase/tests/context_video_entry.sql').read_text()
         result = self.sql('begin;\n' + fixture + '\nrollback;')
         self.assertIn('PASS: context_video_entry', result.stderr)
-
-    def test_fixture_rolled_back_and_no_rows_remain(self):
-        result = self.sql('''
-            select (select count(*) from public.context_requests)
+        # Checked after the fixture in the same test, so the rollback is actually exercised.
+        remaining = self.sql('''
+            select (select count(*) from public.context_resources)
+                 + (select count(*) from public.context_requests)
                  + (select count(*) from public.context_subjects)
+                 + (select count(*) from public.context_sources)
+                 + (select count(*) from public.context_results)
                  + (select count(*) from public.context_documents)
                  + (select count(*) from public.accounts)
                  + (select count(*) from public.account_artist_ids)
                  + (select count(*) from public.songs)
                  + (select count(*) from public.song_identifiers);
         ''')
-        self.assertEqual(result.stdout.strip(), '0')
+        self.assertEqual(remaining.stdout.strip(), '0')
 
     def test_browser_roles_cannot_execute(self):
         result = self.sql(f'''
