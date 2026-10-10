@@ -17,7 +17,7 @@ MIGRATION = ROOT / 'supabase/migrations/20261010214300_context_dsp_listings.sql'
 # synthetic value the API Context suites already use; provider ids are fixture strings.
 DECLARE = '''
  owner uuid:=gen_random_uuid(); resource uuid; subject uuid; req uuid;
- module jsonb; claim jsonb; saved jsonb; kind text; snapshots jsonb;
+ module jsonb; claim jsonb; saved jsonb; kind text; snapshots jsonb; resources_before bigint;
 '''
 SEED = '''
  insert into public.accounts(id,name) values(owner,'DSP listings owner');
@@ -53,6 +53,7 @@ class DspListings(release_cases.ReleaseCases):
 
     def test_claim_save_and_reuse_storefront_scoped_listing_observation(self):
         result = self.sql(block('''
+ select count(*) into resources_before from public.context_resources;
  claim:=public.claim_context_enrichment(owner,req,module);
  if claim->>'state'<>'claimed' then raise exception 'Expected claimed, got %',claim; end if;
  -- Two storefronts in one result: jp is not listed, us is listed. Both stay as evidence.
@@ -78,7 +79,7 @@ class DspListings(release_cases.ReleaseCases):
  if snapshots is distinct from '{"jp":false,"us":true}'::jsonb
   then raise exception 'Each storefront snapshot was not versioned separately: %',snapshots; end if;
  -- A listing is evidence about a recording; it never becomes a resource, identity or release subject.
- if exists(select 1 from public.context_resources where provider<>'spotify') then raise exception 'Listing became a canonical resource'; end if;
+ if (select count(*) from public.context_resources)<>resources_before then raise exception 'Listing became a canonical resource'; end if;
  if exists(select 1 from public.context_resource_links) then raise exception 'Listing became an identity link'; end if;
  if (select count(*) from public.context_subjects)<>1 then raise exception 'Listing created a subject'; end if;
  claim:=public.claim_context_enrichment(owner,req,module);

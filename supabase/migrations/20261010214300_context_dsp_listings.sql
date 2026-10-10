@@ -1,4 +1,4 @@
--- Add the dsp_listings topic: DSP store listings (Apple Music first) persist as storefront-scoped provider observations, never as canonical resources, identities or release IDs. Verbatim copy of claim_context_enrichment from 20260927090000_context_audio_source.sql plus the dsp_listings topic; a later redefinition must keep dsp_listings in both lists.
+-- Add the dsp_listings topic: DSP store listings (Apple Music first) persist as storefront-scoped provider observations, never as canonical resources, identities or release IDs. Verbatim copy of claim_context_enrichment from 20260927090000_context_audio_source.sql plus the dsp_listings topic; a later redefinition must keep dsp_listings in both lists. Wiring dsp_listings into the planner also needs a dsp node-to-topic mapping in save_context_execution_outcome (20260924100000_context_release_track_execution.sql), which this slice leaves unwired.
 begin;
 create or replace function public.claim_context_enrichment(p_owner uuid,p_request uuid,p_module jsonb)
 returns jsonb language plpgsql set search_path='' as $$
