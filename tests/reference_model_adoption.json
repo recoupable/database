@@ -3,12 +3,12 @@
     "id": "subject-kinds",
     "relationship": "identity",
     "status": "main_migration",
-    "concept": "Context subjects are typed: artist, recording, release, video, catalog and songwriter/company/campaign/material inputs are distinct kinds. Researching one never converts it into another kind.",
+    "concept": "Context subjects are typed: artist, recording, release, video, catalog and songwriter/company/campaign/material inputs are distinct kinds, and these are the only kinds. Researching one never converts it into another kind.",
     "tickets": ["recoupable/app#2136", "recoupable/app#2137", "recoupable/app#2138", "recoupable/app#2140"],
     "defined_by": ["20260925130000_context_supporting_text_entry.sql"],
     "checks": [
       {"kind": "check", "table": "context_subjects", "constraint": "context_subjects_kind_check", "defined_in": "20260925130000_context_supporting_text_entry.sql",
-       "literals": ["artist", "recording", "release", "video", "catalog", "songwriter", "company", "campaign", "material"]}
+       "exact": true, "literals": ["artist", "recording", "release", "video", "catalog", "songwriter", "company", "campaign", "material"]}
     ]
   },
   {
@@ -39,12 +39,12 @@
     "id": "unresolved-name-inputs",
     "relationship": "identity",
     "status": "main_migration",
-    "concept": "Submitted songwriter, company, campaign and supporting-material inputs are opaque Recoup resources, not confirmed people, companies or registry identities.",
+    "concept": "Submitted songwriter, company, campaign and supporting-material inputs are opaque Recoup resources, not confirmed people, companies or registry identities. The other resource kinds are observed provider artists, tracks, releases, videos and workspace catalogs.",
     "tickets": ["recoupable/app#2136", "recoupable/app#2137"],
     "defined_by": ["20260922070000_context_catalog_entry.sql", "20260925130000_context_supporting_text_entry.sql"],
     "checks": [
       {"kind": "check", "table": "context_resources", "constraint": "context_resources_resource_kind_check", "defined_in": "20260925130000_context_supporting_text_entry.sql",
-       "literals": ["songwriter_input", "company_input", "campaign_input", "material_input"]},
+       "exact": true, "literals": ["artist", "track", "release", "video", "catalog", "songwriter_input", "company_input", "campaign_input", "material_input"]},
       {"kind": "check", "table": "context_resources", "constraint": "context_resources_provider_check", "defined_in": "20260922070000_context_catalog_entry.sql",
        "literals": ["recoup"]}
     ]
@@ -78,7 +78,8 @@
     "concept": "An internal recording identity for unreleased or ID-less music. Until adopted, such music stays unresolved rather than receiving an invented identifier.",
     "tickets": ["recoupable/app#2141"],
     "checks": [
-      {"kind": "behaviour", "test": "test_recording_subject_requires_isrc"}
+      {"kind": "behaviour", "test": "test_recording_subject_requires_isrc"},
+      {"kind": "absent_literal", "pattern": "^(unreleased|unidentified|identifier_less|id_less|internal)_(recording|track|music|song)s?$"}
     ]
   },
   {
@@ -88,7 +89,7 @@
     "concept": "Compositions (musical works), ISWCs and verified recording-to-composition links.",
     "tickets": ["recoupable/app#2142"],
     "checks": [
-      {"kind": "absent_table", "pattern": "composition|musical_work|^works$|iswc"},
+      {"kind": "absent_table", "pattern": "composition|musical_work|(^|_)works(_|$)|iswc"},
       {"kind": "absent_column", "pattern": "composition|iswc"}
     ]
   },
@@ -96,12 +97,13 @@
     "id": "release-observed-resource",
     "relationship": "recording_composition_release",
     "status": "main_migration",
-    "concept": "A release subject is anchored to an observed provider resource. A provider listing is an observation, not an all-source business release.",
+    "concept": "A release subject is anchored only to a Context resource (the observed provider listing), never to an ISRC, artist account or catalog. A provider listing is an observation, not an all-source business release.",
     "tickets": ["recoupable/app#2126", "recoupable/app#2139"],
     "defined_by": ["20260925130000_context_supporting_text_entry.sql"],
     "checks": [
       {"kind": "check", "table": "context_subjects", "constraint": "context_subjects_check", "defined_in": "20260925130000_context_supporting_text_entry.sql",
-       "literals": ["release"], "columns": ["resource_id"]}
+       "literals": ["release"], "columns": ["resource_id"]},
+      {"kind": "behaviour", "test": "test_release_subject_is_anchored_to_a_resource"}
     ]
   },
   {

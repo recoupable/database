@@ -4,19 +4,24 @@ This validates which reference-model distinctions current migration files enforc
 It is not a production schema audit and it is not the reference model itself.
 """
 import json
+import os
 import pathlib
 import re
+import subprocess
 
 import test_release_cases as release_cases
 
 ROOT = release_cases.ROOT
 MIGRATIONS_DIR = ROOT / 'supabase/migrations'
 MAP_PATH = pathlib.Path(__file__).with_name('reference_model_adoption.json')
+# A change that edits any of these must match every migration, including older ones.
+MAP_FILES = ('tests/reference_model_adoption.json', 'tests/test_reference_model_adoption.py',
+             'tests/test_release_cases.py')
 
 STATUSES = {'main_migration', 'open_pr', 'not_adopted'}
 RELATIONSHIPS = {'identity', 'recording_composition_release', 'roster_catalog', 'scoped_evidence'}
 DYNAMIC_CHECKS = {'check', 'column', 'foreign_key', 'references_only', 'no_unique_on', 'server_only'}
-ABSENCE_CHECKS = {'absent_table', 'absent_function', 'absent_column'}
+ABSENCE_CHECKS = {'absent_table', 'absent_function', 'absent_column', 'absent_literal'}
 CHECKS_BY_STATUS = {
     'main_migration': DYNAMIC_CHECKS | {'behaviour', 'suite'},
     'open_pr': ABSENCE_CHECKS,
@@ -28,7 +33,9 @@ SQL_NAME = re.compile(r'^[a-z][a-z0-9_]*$')
 
 # Applied after the release-case harness, oldest first. Only the five subject-entry
 # migrations redefine the subject/resource kind checks, so applying them after the
-# harness migrations yields the same constraints as chronological replay.
+# harness migrations yields the same constraints as chronological replay. Any other
+# migration that changes a mapped table must be added here (see
+# test_unapplied_migrations_leave_mapped_tables_alone).
 EXTRA_MIGRATIONS = [
     '20260922070000_context_catalog_entry.sql',
     '20260923080000_context_execution_records.sql',
@@ -43,6 +50,23 @@ EXTRA_MIGRATIONS = [
 ]
 APPLIED = set(release_cases.MIGRATIONS) | set(EXTRA_MIGRATIONS)
 
+# Pull-request CI sets this to the base commit; pushes to main set it to HEAD. A
+# mismatch caused by a migration that is already on that base merged before this
+# suite saw it, so it is printed as a GitHub warning instead of turning main or an
+# unrelated pull request red; fix it with a map-only change. When unset (local
+# runs), or when the change edits MAP_FILES, every mismatch fails.
+BASE_REF = os.environ.get('ADOPTION_MAP_BASE_REF')
+
+COLUMN_TYPES = (r'text|varchar|character|citext|uuid|jsonb?|smallint|integer|int[248]?|bigint|numeric|decimal|'
+                r'real|double|boolean|bool|date|time|timestamp|timestamptz|interval|bytea|inet|bigserial|serial')
+DEFINITIONS = {
+    'absent_table': [r'create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)'],
+    'absent_function': [r'create\s+(?:or\s+replace\s+)?function\s+(?:"?public"?\.)?"?([a-z0-9_]+)'],
+    'absent_column': [r'add\s+column\s+(?:if\s+not\s+exists\s+)?"?([a-z0-9_]+)',
+                      rf'"?([a-z0-9_]+)"?\s+(?:{COLUMN_TYPES})\b'],
+    'absent_literal': [r"'([^']*)'"],
+}
+
 ORG = '21470000-0000-4000-8000-000000000001'
 ACTOR = '21470000-0000-4000-8000-000000000002'
 RESOURCE = '21470000-0000-4000-8000-000000000003'
@@ -53,19 +77,60 @@ def load_map():
 
 
 def migration_texts():
-    return {path.name: path.read_text().lower() for path in sorted(MIGRATIONS_DIR.glob('*.sql'))}
+    """Lower-cased migration text without SQL comments, oldest first."""
+    return {path.name: re.sub(r'/\*.*?\*/|--[^\n]*', ' ', path.read_text().lower(), flags=re.S)
+            for path in sorted(MIGRATIONS_DIR.glob('*.sql'))}
 
 
-def defined_tables(text):
-    return set(re.findall(r'create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)', text))
+def definitions(texts, patterns):
+    """Return {object name: [defining migrations, oldest first]}."""
+    found = {}
+    for migration, text in texts.items():
+        for name in {name for pattern in patterns for name in re.findall(pattern, text)}:
+            found.setdefault(name, []).append(migration)
+    return found
 
 
-def defined_functions(text):
-    return set(re.findall(r'create\s+(?:or\s+replace\s+)?function\s+(?:"?public"?\.)?"?([a-z0-9_]+)', text))
+def mapped_tables(rows):
+    tables = set()
+    for row in rows:
+        if row['status'] == 'main_migration':
+            for check in row['checks']:
+                if 'table' in check:
+                    tables.add(check['table'])
+                if check['kind'] == 'server_only':
+                    tables.update(check['tables'])
+    return tables
 
 
-def declared_columns(text):
-    return set(re.findall(r'"?([a-z0-9_]+)"?\s+(?:text|varchar|character|citext|uuid|jsonb|integer|bigint)\b', text))
+def touched_tables(text, tables):
+    """Mapped tables whose columns, constraints, indexes, triggers, policies or grants a migration changes."""
+    name = r'(?:"?public"?\.)?"?(' + '|'.join(sorted(tables)) + r')"?\b'
+    statements = (
+        rf'alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?{name}',
+        rf'drop\s+table\s+(?:if\s+exists\s+)?(?:[^;]*?,\s*)?{name}',
+        rf'create\s+(?:unique\s+)?index\s[^;]*?\bon\s+(?:only\s+)?{name}',
+        rf'(?:create\s+(?:or\s+replace\s+)?(?:constraint\s+)?|drop\s+)trigger\s[^;]*?\bon\s+{name}',
+        rf'(?:create|alter|drop)\s+policy\s[^;]*?\bon\s+{name}',
+        rf'(?:grant|revoke)\s[^;]*?\bon\s+(?:table\s+)?(?:[^;]*?,\s*)?{name}',
+    )
+    touched = {table for statement in statements for table in re.findall(statement, text)}
+    if re.search(r'(?:grant|revoke)\s[^;]*?\bon\s+all\s+tables\s+in\s+schema\s+public\b', text):
+        touched |= set(tables)
+    return touched
+
+
+def comparison_base():
+    """Return (migrations already on BASE_REF, whether every mismatch fails)."""
+    if not BASE_REF:
+        return set(), True
+    git = ['git', '-C', str(ROOT)]
+    listed = subprocess.run(git + ['ls-tree', '--name-only', BASE_REF, 'supabase/migrations/'],
+                            capture_output=True, text=True)
+    if listed.returncode:
+        raise RuntimeError(f'cannot list migrations at {BASE_REF}: {listed.stderr}')
+    edited = subprocess.run(git + ['diff', '--quiet', BASE_REF, '--', *MAP_FILES]).returncode != 0
+    return {pathlib.PurePosixPath(line).name for line in listed.stdout.splitlines()}, edited
 
 
 class ReferenceModelAdoption(release_cases.ReleaseCases):
@@ -73,6 +138,7 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
 
     @classmethod
     def setUpClass(cls):
+        cls.base_migrations, cls.strict = comparison_base()
         super().setUpClass()
         cls.sql('''
             CREATE TABLE public.catalogs(id uuid PRIMARY KEY,name text,updated_at timestamptz DEFAULT now());
@@ -91,6 +157,18 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
         with self.assertRaises(AssertionError) as caught:
             self.sql(sql)
         self.assertIn(expected, str(caught.exception))
+
+    def assertMapCurrent(self, mismatches):
+        """Fail on mismatches this change introduces; only warn about ones merged before it."""
+        failures = []
+        for migration, problem in sorted(set(mismatches), key=str):
+            if self.strict or migration is None or migration not in self.base_migrations:
+                failures.append(f'{migration or "map"}: {problem}')
+            else:
+                # Leading newline: a workflow command must start its own line.
+                print(f'\n::warning title=Stale reference model adoption map::{migration}: {problem}', flush=True)
+        self.assertFalse(failures, 'update tests/reference_model_adoption.json in the same change:\n  '
+                         + '\n  '.join(failures))
 
     # Map shape -----------------------------------------------------------------
 
@@ -120,6 +198,8 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
                     for key in ('tables', 'columns', 'names'):
                         for name in check.get(key, []):
                             self.assertRegex(name, SQL_NAME)
+                    if 'pattern' in check:
+                        re.compile(check['pattern'])
                     if check['kind'] == 'behaviour':
                         self.assertTrue(callable(getattr(self, check['test'], None)), check['test'])
                     if check['kind'] == 'suite':
@@ -149,17 +229,28 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
                     with self.subTest(row=row['id'], check=check['kind']):
                         getattr(self, f"verify_{check['kind']}")(check)
 
+    def test_unapplied_migrations_leave_mapped_tables_alone(self):
+        """Structural checks only see the migrations this runner applies."""
+        tables = mapped_tables(load_map())
+        self.assertTrue(tables)
+        self.assertMapCurrent([
+            (migration, f'changes mapped table {table}; add it to EXTRA_MIGRATIONS and recheck the rows')
+            for migration, text in migration_texts().items() if migration not in APPLIED
+            for table in sorted(touched_tables(text, tables))])
+
     def test_constraint_rows_name_the_latest_defining_migration(self):
         texts = migration_texts()
         checks = [check for row in load_map() for check in row['checks'] if check['kind'] == 'check']
         self.assertTrue(checks)
+        mismatches = []
         for check in checks:
-            with self.subTest(constraint=check['constraint']):
-                pattern = re.compile(r'add\s+constraint\s+' + re.escape(check['constraint']) + r'\b')
-                definers = [name for name, text in texts.items() if pattern.search(text)]
-                self.assertTrue(definers, 'no main migration defines this constraint')
-                self.assertEqual(definers[-1], check['defined_in'],
-                                 'a newer migration changed a mapped constraint; update the map in the same PR')
+            pattern = re.compile(r'add\s+constraint\s+' + re.escape(check['constraint']) + r'\b')
+            definers = [name for name, text in texts.items() if pattern.search(text)]
+            if check['defined_in'] not in definers:
+                mismatches.append((None, f"{check['defined_in']} does not define {check['constraint']}"))
+            elif definers[-1] != check['defined_in']:
+                mismatches.append((definers[-1], f"redefines {check['constraint']}; recheck the row and its defined_in"))
+        self.assertMapCurrent(mismatches)
 
     def verify_check(self, check):
         definition = self.scalar(
@@ -167,7 +258,10 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
             f"WHERE conrelid='public.{check['table']}'::regclass AND conname='{check['constraint']}'")
         self.assertTrue(definition, f"{check['constraint']} missing")
         literals = set(re.findall(r"'([^']*)'", definition))
-        self.assertLessEqual(set(check.get('literals', [])), literals)
+        if check.get('exact'):
+            self.assertEqual(literals, set(check['literals']), f"{check['constraint']} allows unmapped values")
+        else:
+            self.assertLessEqual(set(check.get('literals', [])), literals)
         for column in check.get('columns', []):
             self.assertRegex(definition, rf'\b{column}\b')
 
@@ -216,27 +310,17 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
 
     def test_open_pr_and_not_adopted_rows_are_absent_from_main_migrations(self):
         texts = migration_texts()
-        tables = set().union(*(defined_tables(text) for text in texts.values()))
-        functions = set().union(*(defined_functions(text) for text in texts.values()))
-        columns = set().union(*(declared_columns(text) for text in texts.values()))
+        defined = {kind: definitions(texts, patterns) for kind, patterns in DEFINITIONS.items()}
         rows = [row for row in load_map() if row['status'] != 'main_migration']
         self.assertTrue(rows)
+        mismatches = []
         for row in rows:
             for check in row['checks']:
-                with self.subTest(row=row['id'], check=check['kind']):
-                    if check['kind'] == 'absent_table':
-                        self.assert_absent(check, tables)
-                    elif check['kind'] == 'absent_function':
-                        self.assert_absent(check, functions)
-                    elif check['kind'] == 'absent_column':
-                        self.assert_absent(check, columns)
-
-    def assert_absent(self, check, defined):
-        if 'names' in check:
-            self.assertFalse(set(check['names']) & defined, 'object already defined on main')
-        if 'pattern' in check:
-            matched = sorted(name for name in defined if re.search(check['pattern'], name))
-            self.assertFalse(matched, 'object matching an unadopted concept is defined on main')
+                for name, migrations in defined.get(check['kind'], {}).items():
+                    if name in check.get('names', []) or re.search(check.get('pattern', r'(?!)'), name):
+                        mismatches += [(migration, f"defines {name} but row {row['id']} is {row['status']}; update the row")
+                                       for migration in migrations]
+        self.assertMapCurrent(mismatches)
 
     # Behaviour referenced by map rows ---------------------------------------------
 
@@ -261,6 +345,25 @@ class ReferenceModelAdoption(release_cases.ReleaseCases):
             VALUES ('{RESOURCE}','spotify','track','fixture-track','https://open.spotify.com/track/fixture-track');
             INSERT INTO public.context_subjects(kind,resource_id) VALUES ('recording','{RESOURCE}');''',
             'context_subjects_check')
+
+    def test_release_subject_is_anchored_to_a_resource(self):
+        setup = f'''BEGIN;
+            INSERT INTO public.accounts(id,name) VALUES ('{ACTOR}','Fixture artist account');
+            INSERT INTO public.songs(isrc) VALUES ('fixture-song-key');
+            INSERT INTO public.context_resources(id,provider,resource_kind,provider_id,canonical_url)
+            VALUES ('{RESOURCE}','spotify','release','fixture-release','https://open.spotify.com/album/fixture-release');'''
+        self.sql(setup + f"INSERT INTO public.context_subjects(kind,resource_id) VALUES ('release','{RESOURCE}'); ROLLBACK;")
+        for anchor, value in (('song_isrc', 'fixture-song-key'), ('artist_id', ACTOR)):
+            with self.subTest(anchor=anchor):
+                self.assertSqlFails(
+                    setup + f"INSERT INTO public.context_subjects(kind,{anchor}) VALUES ('release','{value}');",
+                    'context_subjects_check')
+                self.assertSqlFails(
+                    setup + f"INSERT INTO public.context_subjects(kind,resource_id,{anchor}) "
+                            f"VALUES ('release','{RESOURCE}','{value}');",
+                    'context_subjects_check')
+        self.assertSqlFails("BEGIN; INSERT INTO public.context_subjects(kind) VALUES ('release');",
+                            'context_subjects_check')
 
     def test_same_name_professionals_remain_separate_records(self):
         result = self.sql(f'''BEGIN;

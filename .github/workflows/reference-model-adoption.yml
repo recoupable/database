@@ -19,6 +19,9 @@ jobs:
         postgres: [15, 16]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The pull-request merge commit and its first parent, the base branch.
+          fetch-depth: 2
       - name: Install PostgreSQL
         run: |
           sudo apt-get update
@@ -27,6 +30,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-${{ matrix.postgres }}
       - name: Check the adoption map against main migrations
+        env:
+          # Pull requests fail on mismatches their own migrations introduce. Mismatches
+          # from migrations already on the base branch, and every mismatch on a push to
+          # main, are reported as warnings so an unrelated merge cannot turn main red.
+          ADOPTION_MAP_BASE_REF: ${{ github.event_name == 'pull_request' && 'HEAD^1' || 'HEAD' }}
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 -m unittest discover -s tests -p 'test_reference_model_adoption.py'
