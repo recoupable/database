@@ -8,7 +8,9 @@ disposable database transaction, or `python3 -m unittest discover -s tests -p
 on macOS export `LC_ALL=C` if `pg_ctl` reports a multithreaded postmaster). The
 fixture saves one YouTube video as a `video` subject with a `video_locator`
 customer assertion and six explicit gaps, then checks identifier validation,
-same-key replay, key conflicts, a second video, workspace isolation, source
+same-key replay, key conflicts, re-submission of the same video under a new key
+(one subject, source and document; one more request, attempt and result), a
+second video, workspace isolation, source
 withdrawal and browser-role denial. It asserts no account, roster, song, song
 identifier, artist, recording or release row is created and no song or artist
 document is written. No provider is called. The chain applied in CI includes the

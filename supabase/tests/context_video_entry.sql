@@ -3,7 +3,7 @@
 -- scoped to one workspace, replayable by key, with no artist/recording/lyrics side effects.
 do $$
 declare owner uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid(); video text:='AbCdEfGhI_1'; other text:='OtherIdAB_2'; video_input text;
- req jsonb; again jsonb; second jsonb; foreign_req jsonb; docs jsonb; saved public.context_results; subject uuid; link public.context_resource_links;
+ req jsonb; again jsonb; resubmit jsonb; second jsonb; foreign_req jsonb; docs jsonb; saved public.context_results; subject uuid; link public.context_resource_links;
  accounts_before bigint; requests_before bigint; results_before bigint; attempts_before bigint; revision_before bigint; source uuid;
 begin
  insert into public.accounts(id,name) values(owner,'Video fixture owner'),(outsider,'Other workspace');
@@ -91,6 +91,25 @@ begin
  exception when others then
   if SQLERRM like 'TEST_FAILURE:%' or SQLERRM<>'Idempotency key already used for different input' then raise; end if;
  end;
+
+ -- Re-submitting the same video with a new key reuses the subject, source and document:
+ -- it appends one request, attempt and accepted result and advances the single locator document.
+ select revision into strict revision_before from public.context_documents where owner_id=owner and subject_id=subject and topic='video_locator';
+ resubmit:=public.create_context_video_request(owner,owner,video,'video-entry-resubmit');
+ if resubmit->>'id'=req->>'id' or resubmit->>'status'<>'partial' or (resubmit->'output'->'subjectIds'->>0)::uuid<>subject
+ then raise exception 'Resubmission did not reuse the video subject in a new partial request'; end if;
+ if (select count(*) from public.context_requests)<>requests_before+1 or (select count(*) from public.context_attempts)<>attempts_before+1
+ or (select count(*) from public.context_results)<>results_before+1
+ then raise exception 'Resubmission did not append exactly one request, attempt and result'; end if;
+ if (select count(*) from public.context_subjects)<>1 or (select count(*) from public.context_resources)<>1
+ or (select count(*) from public.context_sources where owner_id=owner)<>1 or (select count(*) from public.context_documents where owner_id=owner)<>1
+ then raise exception 'Resubmission duplicated the subject, resource, source or document'; end if;
+ if not exists(select 1 from public.context_documents where owner_id=owner and subject_id=subject and topic='video_locator'
+  and revision=revision_before+1 and current_result_id<>saved.id)
+ then raise exception 'Resubmission did not advance the single locator document'; end if;
+ if (select count(*) from public.account_artist_ids)<>0 or (select count(*) from public.songs)<>0
+ or exists(select 1 from public.context_documents where topic<>'video_locator')
+ then raise exception 'Resubmission created artist, recording or non-locator rows'; end if;
 
  -- A second video for the same workspace is a distinct subject; the first document is untouched.
  select revision into strict revision_before from public.context_documents where owner_id=owner and subject_id=subject and topic='video_locator';
