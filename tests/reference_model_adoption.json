@@ -1,0 +1,283 @@
+[
+  {
+    "id": "subject-kinds",
+    "relationship": "identity",
+    "status": "main_migration",
+    "concept": "Context subjects are typed: artist, recording, release, video, catalog and songwriter/company/campaign/material inputs are distinct kinds. Researching one never converts it into another kind.",
+    "tickets": ["recoupable/app#2136", "recoupable/app#2137", "recoupable/app#2138", "recoupable/app#2140"],
+    "defined_by": ["20260925130000_context_supporting_text_entry.sql"],
+    "checks": [
+      {"kind": "check", "table": "context_subjects", "constraint": "context_subjects_kind_check", "defined_in": "20260925130000_context_supporting_text_entry.sql",
+       "literals": ["artist", "recording", "release", "video", "catalog", "songwriter", "company", "campaign", "material"]}
+    ]
+  },
+  {
+    "id": "subject-identity-exclusivity",
+    "relationship": "identity",
+    "status": "main_migration",
+    "concept": "Each subject kind is anchored to exactly one existing identifier column: artist account, ISRC, observed or opaque resource, or catalog. A company or songwriter input cannot reuse an artist account, so companies are never stored as artists.",
+    "tickets": ["recoupable/app#2119", "recoupable/app#2137"],
+    "defined_by": ["20260925130000_context_supporting_text_entry.sql"],
+    "checks": [
+      {"kind": "check", "table": "context_subjects", "constraint": "context_subjects_check", "defined_in": "20260925130000_context_supporting_text_entry.sql",
+       "columns": ["artist_id", "song_isrc", "resource_id", "catalog_id"]},
+      {"kind": "behaviour", "test": "test_company_subject_cannot_reuse_artist_account"}
+    ]
+  },
+  {
+    "id": "artist-account-identity",
+    "relationship": "identity",
+    "status": "main_migration",
+    "concept": "Artist subjects reuse the existing artist account ID. Account and access identities are preserved, not duplicated.",
+    "tickets": ["recoupable/app#2119"],
+    "defined_by": ["20260920010000_context_foundation.sql"],
+    "checks": [
+      {"kind": "foreign_key", "table": "context_subjects", "column": "artist_id", "references": "accounts"}
+    ]
+  },
+  {
+    "id": "unresolved-name-inputs",
+    "relationship": "identity",
+    "status": "main_migration",
+    "concept": "Submitted songwriter, company, campaign and supporting-material inputs are opaque Recoup resources, not confirmed people, companies or registry identities.",
+    "tickets": ["recoupable/app#2136", "recoupable/app#2137"],
+    "defined_by": ["20260922070000_context_catalog_entry.sql", "20260925130000_context_supporting_text_entry.sql"],
+    "checks": [
+      {"kind": "check", "table": "context_resources", "constraint": "context_resources_resource_kind_check", "defined_in": "20260925130000_context_supporting_text_entry.sql",
+       "literals": ["songwriter_input", "company_input", "campaign_input", "material_input"]},
+      {"kind": "check", "table": "context_resources", "constraint": "context_resources_provider_check", "defined_in": "20260922070000_context_catalog_entry.sql",
+       "literals": ["recoup"]}
+    ]
+  },
+  {
+    "id": "business-subject-bridge",
+    "relationship": "identity",
+    "status": "not_adopted",
+    "concept": "One person/company business-subject link across artist accounts, organization professionals and unresolved name inputs. Today these stay separate existing IDs; there is no shared person or company registry.",
+    "tickets": ["recoupable/app#2147", "recoupable/app#2136", "recoupable/app#2137"],
+    "checks": [
+      {"kind": "absent_table", "pattern": "^(business_subjects?|parties|persons|people|companies|legal_entities)$"}
+    ]
+  },
+  {
+    "id": "recording-requires-isrc",
+    "relationship": "recording_composition_release",
+    "status": "main_migration",
+    "concept": "A recording subject requires an existing ISRC from songs. Context never fabricates an ISRC to create one.",
+    "tickets": ["recoupable/app#2126"],
+    "defined_by": ["20260920010000_context_foundation.sql", "20260925130000_context_supporting_text_entry.sql"],
+    "checks": [
+      {"kind": "foreign_key", "table": "context_subjects", "column": "song_isrc", "references": "songs"},
+      {"kind": "behaviour", "test": "test_recording_subject_requires_isrc"}
+    ]
+  },
+  {
+    "id": "identifier-less-recording",
+    "relationship": "recording_composition_release",
+    "status": "not_adopted",
+    "concept": "An internal recording identity for unreleased or ID-less music. Until adopted, such music stays unresolved rather than receiving an invented identifier.",
+    "tickets": ["recoupable/app#2141"],
+    "checks": [
+      {"kind": "behaviour", "test": "test_recording_subject_requires_isrc"}
+    ]
+  },
+  {
+    "id": "composition-work",
+    "relationship": "recording_composition_release",
+    "status": "not_adopted",
+    "concept": "Compositions (musical works), ISWCs and verified recording-to-composition links.",
+    "tickets": ["recoupable/app#2142"],
+    "checks": [
+      {"kind": "absent_table", "pattern": "composition|musical_work|^works$|iswc"},
+      {"kind": "absent_column", "pattern": "composition|iswc"}
+    ]
+  },
+  {
+    "id": "release-observed-resource",
+    "relationship": "recording_composition_release",
+    "status": "main_migration",
+    "concept": "A release subject is anchored to an observed provider resource. A provider listing is an observation, not an all-source business release.",
+    "tickets": ["recoupable/app#2126", "recoupable/app#2139"],
+    "defined_by": ["20260925130000_context_supporting_text_entry.sql"],
+    "checks": [
+      {"kind": "check", "table": "context_subjects", "constraint": "context_subjects_check", "defined_in": "20260925130000_context_supporting_text_entry.sql",
+       "literals": ["release"], "columns": ["resource_id"]}
+    ]
+  },
+  {
+    "id": "release-track-slots-are-observations",
+    "relationship": "recording_composition_release",
+    "status": "main_migration",
+    "concept": "Release track positions are owner-scoped observations tied to one accepted provider result and a track resource. They are not confirmed recording identities.",
+    "tickets": ["recoupable/app#2126", "recoupable/app#2139"],
+    "defined_by": ["20260924060000_context_release_track_slots.sql"],
+    "checks": [
+      {"kind": "references_only", "table": "context_release_track_slots", "tables": ["context_subjects", "context_resources", "context_results"]},
+      {"kind": "server_only", "tables": ["context_release_track_slots"]}
+    ]
+  },
+  {
+    "id": "catalog-subject",
+    "relationship": "roster_catalog",
+    "status": "main_migration",
+    "concept": "A catalog subject points at an existing workspace-linked catalog. It does not assert ownership of the catalog's music.",
+    "tickets": ["recoupable/app#2139"],
+    "defined_by": ["20260922070000_context_catalog_entry.sql"],
+    "checks": [
+      {"kind": "foreign_key", "table": "context_subjects", "column": "catalog_id", "references": "catalogs"}
+    ]
+  },
+  {
+    "id": "catalog-membership-is-inclusion-evidence",
+    "relationship": "roster_catalog",
+    "status": "main_migration",
+    "concept": "Expanded catalog members record request-scoped inclusion of ISRC-backed recordings. They reference requests, subjects, catalogs and songs only, never artist rosters or rights.",
+    "tickets": ["recoupable/app#2139"],
+    "defined_by": ["20260923080000_context_execution_records.sql"],
+    "checks": [
+      {"kind": "references_only", "table": "context_request_catalog_members", "tables": ["context_requests", "context_subjects", "catalogs", "songs"]},
+      {"kind": "server_only", "tables": ["context_request_catalog_members"]}
+    ]
+  },
+  {
+    "id": "professional-roster-records",
+    "relationship": "roster_catalog",
+    "status": "main_migration",
+    "concept": "Organization professionals are organization-private songwriter/producer records confirmed by an operator. They create no login account, link to no Context or artist roster table, and names are not unique, so namesakes stay separate.",
+    "tickets": ["recoupable/app#2136"],
+    "defined_by": ["20261008050000_professional_roster.sql"],
+    "checks": [
+      {"kind": "references_only", "table": "organization_professionals", "tables": ["accounts"]},
+      {"kind": "column", "table": "organization_professionals", "column": "organization_id", "not_null": true},
+      {"kind": "no_unique_on", "table": "organization_professionals", "column": "name"},
+      {"kind": "server_only", "tables": ["organization_professionals", "professional_roster_requests"]},
+      {"kind": "behaviour", "test": "test_same_name_professionals_remain_separate_records"}
+    ]
+  },
+  {
+    "id": "research-without-roster",
+    "relationship": "roster_catalog",
+    "status": "main_migration",
+    "concept": "Provider research keeps credits and lineage without enrolling researched artists into personal or organization rosters. Enrollment requires the explicit roster operation.",
+    "tickets": ["recoupable/app#2119", "recoupable/app#2136"],
+    "defined_by": ["20261009190000_context_research_without_roster.sql"],
+    "checks": [
+      {"kind": "suite", "file": "tests/test_research_roster.py"}
+    ]
+  },
+  {
+    "id": "company-relationships",
+    "relationship": "roster_catalog",
+    "status": "not_adopted",
+    "concept": "Company business relationships: frontline roster versus catalog interests, including former roster members, for companies that are not login organizations.",
+    "tickets": ["recoupable/app#2137"],
+    "checks": [
+      {"kind": "absent_table", "pattern": "relationship|catalog_interest"}
+    ]
+  },
+  {
+    "id": "rights-agreements-and-mandates",
+    "relationship": "roster_catalog",
+    "status": "not_adopted",
+    "concept": "Rights interests, agreements, income entitlements, representation mandates, collection routes and rights-claim conflicts. Source links, credits, catalog membership and roster records never imply them.",
+    "tickets": ["recoupable/app#2147"],
+    "checks": [
+      {"kind": "absent_table", "pattern": "rights|agreement|entitlement|mandate|collection_route|royalt|claim_conflict"}
+    ]
+  },
+  {
+    "id": "owned-source-versions",
+    "relationship": "scoped_evidence",
+    "status": "main_migration",
+    "concept": "Evidence sources belong to one owner workspace; versions carry the owner in a composite key; withdrawal and removal are timestamps that preserve history.",
+    "tickets": ["recoupable/app#2120", "recoupable/app#2121", "recoupable/app#2124"],
+    "defined_by": ["20260920010000_context_foundation.sql"],
+    "checks": [
+      {"kind": "column", "table": "context_sources", "column": "owner_id", "not_null": true},
+      {"kind": "foreign_key", "table": "context_sources", "column": "owner_id", "references": "accounts"},
+      {"kind": "column", "table": "context_sources", "column": "withdrawn_at", "not_null": false},
+      {"kind": "column", "table": "context_source_versions", "column": "owner_id", "not_null": true},
+      {"kind": "column", "table": "context_source_versions", "column": "removed_at", "not_null": false},
+      {"kind": "references_only", "table": "context_source_versions", "tables": ["context_sources"]}
+    ]
+  },
+  {
+    "id": "server-only-evidence-access",
+    "relationship": "scoped_evidence",
+    "status": "main_migration",
+    "concept": "Context evidence tables have row level security and no browser-role grants. Reads go through authenticated, membership-checked server operations.",
+    "tickets": ["recoupable/app#2120"],
+    "defined_by": ["20260920010000_context_foundation.sql"],
+    "checks": [
+      {"kind": "server_only", "tables": ["context_resources", "context_subjects", "context_resource_links", "context_requests", "context_sources", "context_source_versions", "context_results", "context_result_sources", "context_documents"]},
+      {"kind": "behaviour", "test": "test_browser_roles_cannot_read_scoped_evidence"}
+    ]
+  },
+  {
+    "id": "company-baseline-read",
+    "relationship": "scoped_evidence",
+    "status": "open_pr",
+    "pr": "recoupable/database#89",
+    "concept": "A scoped company baseline read over existing artist links, organization professionals and retained source metadata.",
+    "tickets": ["recoupable/app#2147"],
+    "checks": [
+      {"kind": "absent_function", "names": ["read_context_company_baseline"]}
+    ]
+  },
+  {
+    "id": "evidence-version-associations",
+    "relationship": "scoped_evidence",
+    "status": "open_pr",
+    "pr": "recoupable/database#90",
+    "concept": "Relevance-only associations from an exact retained source version to existing authorized targets. An association is not identity confirmation, a parsed claim, rights or a mandate.",
+    "tickets": ["recoupable/app#2140", "recoupable/app#2147"],
+    "checks": [
+      {"kind": "absent_table", "names": ["context_evidence_attachments", "context_evidence_attachment_targets"]},
+      {"kind": "absent_function", "names": ["attach_context_evidence"]}
+    ]
+  },
+  {
+    "id": "request-evidence-manifest",
+    "relationship": "scoped_evidence",
+    "status": "open_pr",
+    "pr": "recoupable/database#92",
+    "concept": "Retained request evidence version metadata for review before parsing.",
+    "tickets": ["recoupable/app#2140"],
+    "checks": [
+      {"kind": "absent_function", "names": ["list_context_request_evidence_versions"]}
+    ]
+  },
+  {
+    "id": "private-original-registration",
+    "relationship": "scoped_evidence",
+    "status": "open_pr",
+    "pr": "recoupable/database#94",
+    "concept": "Scoped receipts registering verified private original files as source versions.",
+    "tickets": ["recoupable/app#2140"],
+    "checks": [
+      {"kind": "absent_table", "names": ["context_original_registrations"]},
+      {"kind": "absent_function", "names": ["register_context_original"]}
+    ]
+  },
+  {
+    "id": "private-original-retrieval",
+    "relationship": "scoped_evidence",
+    "status": "open_pr",
+    "pr": "recoupable/database#95",
+    "concept": "Server lookup of an exact retained original after current access checks.",
+    "tickets": ["recoupable/app#2140"],
+    "checks": [
+      {"kind": "absent_function", "names": ["get_context_original_retrieval"]}
+    ]
+  },
+  {
+    "id": "private-document-import-review",
+    "relationship": "scoped_evidence",
+    "status": "not_adopted",
+    "concept": "Import batches and parse/review state for private documents. A retained source version is not a parsed or reviewed claim.",
+    "tickets": ["recoupable/app#2140"],
+    "checks": [
+      {"kind": "absent_table", "pattern": "import|(^|_)pars(e|ed|ing)(_|$)"}
+    ]
+  }
+]
