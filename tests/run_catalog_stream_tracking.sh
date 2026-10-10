@@ -34,6 +34,7 @@ grant all on public.accounts, public.catalogs, public.songs, public.account_cata
 SQL
 "$pg_bin/psql" "${args[@]}" -f "$repo_root/supabase/migrations/20261009193000_catalog_daily_stream_tracking.sql" >/dev/null
 "$pg_bin/psql" "${args[@]}" -f "$repo_root/supabase/migrations/20261010035000_catalog_stream_membership_locks.sql" >/dev/null
+"$pg_bin/psql" "${args[@]}" -f "$repo_root/supabase/migrations/20261010040000_catalog_stream_parent_lock_order.sql" >/dev/null
 "$pg_bin/psql" "${args[@]}" -f "$repo_root/supabase/tests/catalog_daily_stream_tracking.sql"
 # Exercise real concurrent deletion against membership rows held by a commit.
 "$pg_bin/psql" "${args[@]}" >/dev/null <<'SQL'
@@ -54,17 +55,37 @@ rollback;
 SQL
 holder_pid=$!
 for attempt in {1..100}; do
-  if rg -q LOCKS_HELD "$cluster_root/lock-holder.log"; then break; fi
+  if [[ "$(<"$cluster_root/lock-holder.log")" == *LOCKS_HELD* ]]; then break; fi
   sleep 0.02
 done
-rg -q LOCKS_HELD "$cluster_root/lock-holder.log"
+[[ "$(<"$cluster_root/lock-holder.log")" == *LOCKS_HELD* ]]
 for table_name in account_catalogs catalog_songs; do
   if "$pg_bin/psql" "${args[@]}" -c "set statement_timeout='300ms'; delete from public.$table_name;" >"$cluster_root/delete.log" 2>&1; then
     printf 'Concurrent membership deletion escaped commit fence.\n' >&2
     exit 1
   fi
-  rg -q 'statement timeout' "$cluster_root/delete.log"
+  [[ "$(<"$cluster_root/delete.log")" == *"statement timeout"* ]]
 done
 wait "$holder_pid"
+
+# Start the account cascade before a commit: it must finish without a lock cycle.
+"$pg_bin/psql" "${args[@]}" >"$cluster_root/owner-delete.log" 2>&1 <<'SQL' &
+begin;
+select id from accounts for update;
+delete from account_catalogs;
+\echo DELETE_HELD
+select pg_sleep(1);
+delete from accounts;
+commit;
+SQL
+deleter_pid=$!
+for attempt in {1..100}; do
+  if [[ "$(<"$cluster_root/owner-delete.log")" == *DELETE_HELD* ]]; then break; fi
+  sleep 0.02
+done
+[[ "$(<"$cluster_root/owner-delete.log")" == *DELETE_HELD* ]]
+"$pg_bin/psql" "${args[@]}" -At -c "select commit_catalog_stream_track((select id from catalog_stream_runs limit 1),'USAAA2400001','{\"state\":\"unavailable\"}'::jsonb);" >"$cluster_root/revoked-commit.log"
+wait "$deleter_pid"
+[[ "$(<"$cluster_root/revoked-commit.log")" == f ]]
 
 printf 'Catalog stream storage checks passed.\n'
