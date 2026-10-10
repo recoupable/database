@@ -9,6 +9,9 @@ declare owner uuid:=gen_random_uuid(); member uuid:=gen_random_uuid(); outsider 
  single_resource uuid:=gen_random_uuid(); single_subject uuid:=gen_random_uuid(); single_req uuid:=gen_random_uuid();
  single_attempt uuid:=gen_random_uuid(); single_source uuid:=gen_random_uuid(); single_version uuid:=gen_random_uuid();
  single_result uuid:=gen_random_uuid(); single_doc uuid:=gen_random_uuid();
+ long_resource uuid:=gen_random_uuid(); long_subject uuid:=gen_random_uuid(); long_req uuid:=gen_random_uuid();
+ long_attempt uuid:=gen_random_uuid(); long_source uuid:=gen_random_uuid(); long_version uuid:=gen_random_uuid();
+ long_result uuid:=gen_random_uuid(); long_doc uuid:=gen_random_uuid();
  current_case jsonb; format jsonb; before_hash text; slot_rows integer; receipt jsonb;
 begin
  insert into public.accounts(id,name) values(owner,'Synthetic format owner'),(member,'Reviewer'),(outsider,'Other account');
@@ -100,6 +103,36 @@ begin
   or format->>'upc' is distinct from repeat('0',12) or format->>'upc_state' is distinct from 'observed'
   or format->'label' is distinct from 'null'::jsonb or format->'release_date' is distinct from 'null'::jsonb
  then raise exception 'Single format projection failed: %',format; end if;
+ -- A release longer than the 100-slot display page whose second disc starts only beyond it:
+ -- disc structure must come from the whole observed track array, not the truncated page.
+ insert into public.context_resources(id,provider,resource_kind,provider_id,canonical_url) values
+  (long_resource,'spotify','release',repeat('G',22),'https://open.spotify.com/album/'||repeat('G',22));
+ insert into public.context_subjects(id,kind,resource_id) values(long_subject,'release',long_resource);
+ insert into public.context_resource_links(resource_id,subject_id,relation,status) values(long_resource,long_subject,'identity','accepted');
+ insert into public.context_requests(id,owner_id,created_by,resource_id,idempotency_key,input_fingerprint,input,status,output) values
+  (long_req,owner,member,long_resource,'format-long',repeat('9',64),jsonb_build_object('kind','release','releaseId',repeat('G',22),'url','https://open.spotify.com/album/'||repeat('G',22)),'partial',jsonb_build_object('subjectIds',jsonb_build_array(long_subject)));
+ insert into public.context_attempts(id,owner_id,request_id,module,attempt,status,provider,recipe_version,schema_version)
+ values(long_attempt,owner,long_req,'spotify_release_context',1,'succeeded','spotify','1','1');
+ insert into public.context_sources(id,owner_id,kind,source_url) values(long_source,owner,'provider_metadata','https://api.spotify.com/v1/albums/'||repeat('G',22));
+ insert into public.context_source_versions(id,owner_id,source_id,fingerprint) values(long_version,owner,long_source,repeat('8',64));
+ insert into public.context_results(id,owner_id,attempt_id,subject_id,topic,reuse_key,status,evidence_kind,normalized_response,coverage)
+ values(long_result,owner,long_attempt,long_subject,'spotify_release_context',repeat('7',64),'accepted','observation',
+  jsonb_build_object('releaseId',repeat('G',22),
+   'album',jsonb_build_object('id',repeat('G',22),'name','Fixture long album','album_type','album','total_tracks',101),
+   'tracks',(select jsonb_agg(jsonb_build_object('id',repeat('H',22),'name','Track','type','track',
+     'disc_number',case when n<=100 then 1 else 2 end,'track_number',case when n<=100 then n else 1 end) order by n) from generate_series(1,101) n),
+   'trackCoverage',jsonb_build_object('extent','full','collectedSlots',101,'reportedTotal',101)),'{"extent":"full"}');
+ insert into public.context_result_sources values(owner,long_result,long_version);
+ insert into public.context_documents(id,owner_id,subject_id,topic,current_result_id,revision) values(long_doc,owner,long_subject,'spotify_release_context',long_result,1);
+ perform public.save_context_spotify_release_track_slots(owner,long_req,long_subject,long_result);
+ current_case:=public.read_context_release_case(member,owner,long_req);
+ format:=current_case->'release_format';
+ if current_case->'track_page'->>'hasMore' is distinct from 'true' or jsonb_array_length(current_case->'tracks')<>100
+  or exists(select 1 from jsonb_array_elements(current_case->'tracks') t where t->>'disc_number' is distinct from '1')
+ then raise exception 'Long release fixture did not truncate the display page to disc 1: %',current_case->'track_page'; end if;
+ if (format->>'disc_count')::integer is distinct from 2 or format->>'multi_disc' is distinct from 'true'
+  or (format->>'reported_total_tracks')::integer is distinct from 101
+ then raise exception 'Disc structure beyond the 100-slot page was under-counted: %',format; end if;
  -- Helper edge cases: absent or unexpected provider values stay unknown; unavailable slots are ignored.
  format:=public.project_context_release_format(jsonb_build_object('id',repeat('A',22),'name','No type'),
   jsonb_build_array(jsonb_build_object('disc_number',1),'null'::jsonb,jsonb_build_object('disc_number','x')));
@@ -125,6 +158,6 @@ begin
  if has_function_privilege('authenticated','public.project_context_release_format(jsonb,jsonb)','execute')
   or has_function_privilege('anon','public.read_context_release_case(uuid,uuid,uuid)','execute')
  then raise exception 'Browser bypass exposed'; end if;
- raise notice 'PASS: uncollected and unknown states, multi-disc album, single with observed UPC, repeated save without duplicates, changed-format staleness, service role and outsider denial';
+ raise notice 'PASS: uncollected and unknown states, multi-disc album, disc beyond the 100-slot page, single with observed UPC, repeated save without duplicates, changed-format staleness, service role and outsider denial';
 end $$;
 rollback;
