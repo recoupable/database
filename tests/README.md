@@ -32,6 +32,8 @@ An operator confirmation is a scoped assertion, not globally verified identity. 
 
 Replaying the same organization/actor/key and normalized input returns the saved response after a fresh access check. A changed request conflicts. A deliberate new key can create a same-name person after explicit confirmation; the system does not claim names uniquely identify people. No production records are changed by these tests.
 
+Retained request evidence discovery: see [EVIDENCE-MANIFEST.md](EVIDENCE-MANIFEST.md)
+for the read-only version manifest, transaction tests and deployment limits.
 
 Research-to-roster isolation: see [RESEARCH-ROSTER.md](RESEARCH-ROSTER.md) for the
 real transaction suite, preserved evidence, explicit enrollment and deployment limits.
