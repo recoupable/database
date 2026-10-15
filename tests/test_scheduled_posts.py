@@ -84,6 +84,7 @@ class ScheduledPosts(unittest.TestCase):
         self.rejected({'platform': "'instagram'", 'description': "'d'", 'tags': "ARRAY['a']", 'status': "'publishing'"})
         self.rejected({'platform': "'youtube'", 'title': "'t'", 'cover_url': "'https://cdn.example.test/c.jpg'", 'status': "'publishing'"})
         self.rejected({'platform': "'youtube'", 'title': "'t'", 'privacy': "'friends'", 'status': "'publishing'"})
+        self.rejected({'platform': "'linkedin'", 'description': "'d'", 'sub_account_id': "'  '", 'status': "'publishing'"})
 
     def test_status_lifecycle_invariants(self):
         self.rejected({'platform': "'x'", 'description': "'d'", 'status': "'scheduled'"})
@@ -91,6 +92,7 @@ class ScheduledPosts(unittest.TestCase):
         post = self.insert({'platform': "'x'", 'description': "'d'", 'status': "'scheduled'", 'publish_at': "now() + interval '10 minutes'"}).stdout.strip()
         self.assertIn('scheduled_posts_posted_has_url', self.sql(f"UPDATE scheduled_posts SET status='posted' WHERE id='{post}'", succeeds=False).stderr)
         self.assertIn('scheduled_posts_failed_has_reason', self.sql(f"UPDATE scheduled_posts SET status='failed' WHERE id='{post}'", succeeds=False).stderr)
+        self.assertIn('scheduled_posts_posted_has_url', self.sql(f"UPDATE scheduled_posts SET status='posted', post_url=' ' WHERE id='{post}'", succeeds=False).stderr)
         self.sql(f"UPDATE scheduled_posts SET status='posted', post_url='https://x.com/recoupai/status/1', text_verified=true WHERE id='{post}'")
         self.assertEqual(self.sql(f"SELECT status, text_verified, updated_at > created_at FROM scheduled_posts WHERE id='{post}'").stdout.strip(), 'posted|t|t')
         failed = self.insert({'platform': "'youtube'", 'title': "'t'", 'status': "'publishing'"}).stdout.strip()

@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS public.scheduled_posts (
     platform              TEXT NOT NULL
         CHECK (platform IN ('instagram', 'x', 'linkedin', 'youtube')),
     -- LinkedIn organization URN when posting as a Page, else NULL.
-    sub_account_id        TEXT CHECK (sub_account_id IS NULL OR platform = 'linkedin'),
+    sub_account_id        TEXT CHECK (sub_account_id IS NULL OR (platform = 'linkedin' AND btrim(sub_account_id) <> '')),
     -- Fetched at publish time, so a scheduled post depends on it still resolving.
     video_url             TEXT NOT NULL CHECK (btrim(video_url) <> ''),
     -- Reel cover / LinkedIn thumbnail. Never sent for YouTube (API-set Shorts
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS public.scheduled_posts (
     CONSTRAINT scheduled_posts_scheduled_has_time
         CHECK (status <> 'scheduled' OR publish_at IS NOT NULL),
     CONSTRAINT scheduled_posts_posted_has_url
-        CHECK (status <> 'posted' OR post_url IS NOT NULL),
+        CHECK (status <> 'posted' OR btrim(coalesce(post_url, '')) <> ''),
     CONSTRAINT scheduled_posts_failed_has_reason
         CHECK (status <> 'failed' OR btrim(coalesce(error_message, '')) <> '')
 );
