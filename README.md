@@ -2,6 +2,10 @@
 
 Supabase migration scripts for the Recoup project.
 
+## Scheduled posts migration
+
+`20261015230000_create_scheduled_posts.sql` adds `scheduled_posts` for `POST /api/posts`; see [tests/SCHEDULED-POSTS.md](tests/SCHEDULED-POSTS.md).
+
 ## Release metadata review migration
 
 `20261008160000_context_release_cases.sql` adds an immutable metadata review
