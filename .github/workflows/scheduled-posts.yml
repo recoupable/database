@@ -26,7 +26,7 @@ jobs:
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y -v ${{ matrix.postgres }}
           sudo apt-get update
           sudo apt-get install -y postgresql-${{ matrix.postgres }}
-      - name: Test scheduled_posts migration
+      - name: Test scheduled_posts migrations
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
-          python3 -m unittest discover -s tests -p 'test_scheduled_posts.py'
+          python3 -m unittest discover -s tests -p 'test_scheduled_posts*.py'
