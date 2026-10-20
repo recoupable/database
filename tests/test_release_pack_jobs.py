@@ -104,3 +104,21 @@ class ReleasePackJobs(ReleasePackFixture):
         self.assertIsNone(revised['job']['production_context'])
         self.assertIsNone(revised['job']['quote'])
         self.assertEqual(revised['job']['revision'],2)
+
+    def test_resume_honors_current_budget_and_revision_before_reserving(self):
+        approved=self.approve()
+        asset=approved['assets'][0]['id']
+        self.command('claim',{'asset_id':asset})
+        self.command('phase',{'asset_id':asset,'phase':'image_submission_0','value':{'state':'accepted','request_id':'fixture','charge_credits':40}})
+        self.command('finish_asset',{'asset_id':asset,'status':'uncertain','error':'lost result'})
+        saved=self.command('settle')
+        args={'asset_id':asset,'quote_id':saved['job']['quote']['id'],'expected_revision':1,'approved_max_usd':0.001}
+        self.assertNotEqual(self.command('resume',args,succeeds=False).returncode,0)
+        self.assertEqual(self.command('read')['assets'][0]['status'],'uncertain')
+        args['approved_max_usd']=0.006
+        args['expected_revision']=2
+        self.assertNotEqual(self.command('resume',args,succeeds=False).returncode,0)
+        args['expected_revision']=1
+        resumed=self.command('resume',args)
+        self.assertEqual(resumed['job']['held_credits'],60)
+        self.assertTrue(resumed['dispatch'])

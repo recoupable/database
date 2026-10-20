@@ -108,6 +108,10 @@ BEGIN
   IF j.status<>'running' THEN RAISE EXCEPTION 'Pack is not running'; END IF;
   UPDATE public.release_pack_jobs SET production_context=p_input->'value',updated_at=now() WHERE id=j.id;
  ELSIF p_action='resume' THEN
+  IF j.quote->>'id' IS DISTINCT FROM p_input->>'quote_id' OR j.revision IS DISTINCT FROM (p_input->>'expected_revision')::integer THEN RAISE EXCEPTION 'Resume approval does not match the current quote and revision'; END IF;
+  SELECT * INTO STRICT a FROM public.release_pack_assets WHERE id=(p_input->>'asset_id')::uuid AND job_id=j.id AND status='uncertain' FOR UPDATE;
+  amount:=greatest(0,a.credits-a.billed_credits);
+  IF p_input->>'approved_max_usd' IS NULL OR (p_input->>'approved_max_usd')::numeric < (amount::numeric*a.maximum_usd/a.credits) THEN RAISE EXCEPTION 'Approved resume budget is below the remaining quote'; END IF;
   IF j.status NOT IN ('partial','failed') OR j.held_credits<>0 THEN RAISE EXCEPTION 'Pack cannot be resumed in its current state'; END IF;
   UPDATE public.release_pack_assets SET status='running',error=null WHERE id=(p_input->>'asset_id')::uuid AND job_id=j.id AND status='uncertain';
   IF NOT FOUND THEN RAISE EXCEPTION 'Only an uncertain accepted attempt can be resumed'; END IF;

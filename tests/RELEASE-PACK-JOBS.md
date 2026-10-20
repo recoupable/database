@@ -7,7 +7,7 @@ Apply `20261020150000_release_pack_jobs.sql` before deploying its API caller. It
 PATH=/opt/homebrew/opt/postgresql@17/bin:$PATH python3 -m unittest discover -s tests -p 'test_release_pack_jobs.py'
 ```
 
-Focused real transaction checks cover account/org denial, browser-role denial, revision/idempotency, concurrent budget approval, provider-stage charge receipts, exactly-once refunds, monthly floor accounting with holds, concurrent topups, ambiguous workflow dispatch, expired-worker fencing and stale creative-context invalidation. The fixture creates and destroys its own local database on a Unix socket; it reads no hosted credentials.
+Focused real transaction checks cover account/org denial, browser-role denial, revision/idempotency, concurrent budget approval, provider-stage charge receipts, exactly-once refunds, monthly floor accounting with holds, concurrent topups, ambiguous workflow dispatch, expired-worker fencing and stale creative-context invalidation, and current revision/budget enforcement on resume. The fixture creates and destroys its own local database on a Unix socket; it reads no hosted credentials.
 
 The complete quote is reserved from available wallet credits at approval. Only accepted visual-provider stages consume the hold and create usage receipts; caption/audio analysis/review/composition are explicitly included at no additional customer charge and bounded by the API worker. Unused funds refund once. The monthly floor counts unconsumed holds as existing funds, preserving topped-up balances without minting credits when a hold is released after renewal. Legacy topups and unaudited deductions use row-locked atomic operations rather than writing a previously read balance.
 
