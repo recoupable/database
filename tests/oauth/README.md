@@ -37,3 +37,20 @@ The runner also applies `20261006130000_oauth_account_identities.sql` to minimal
 `resolve_oauth_account` is service-role-only. Its email array must come from server-verified Privy identity evidence; never pass browser-provided email/account claims. It binds one immutable `(provider_app_id, provider_subject)` to exactly one existing account. Zero or multiple account matches fail without provisioning. Later email changes never remap an existing subject. Concurrent initial links serialize. Deleting an account sets the binding to null and preserves the subject as a tombstone; later login fails instead of silently relinking. Anonymous/authenticated callers have neither table nor RPC access.
 
 No production login endpoint uses this mapping yet. Existing app onboarding is unchanged. Apply both OAuth migrations before enabling their API callers. Do not purge identity tombstones automatically; account relinking requires an explicitly designed recovery flow.
+## Agent registration transitions
+
+`test_agent_registration.py` exercises migration
+`20261020040000_oauth_agent_registration_cas.sql`: competing ciphertext updates
+have one winner, expired or revoked records cannot be changed, revocation wins
+against late updates, and only `service_role` can execute the function. The function
+is restricted to `RecoupAgentRegistration`; it does not mutate OAuth token models,
+indices, bindings, expiry, or consumption markers.
+
+`oauth_store_purge_agent_registrations` is also service-role-only. Each call selects
+at most 100 expired registration families within one issuer, deletes their expired
+artifacts, and preserves active artifacts and all revocation tombstones. The API
+calls it before creating a new registration; no scheduler or broad OAuth cleanup is
+introduced. Tests verify issuer isolation, permissions, and the batch bound.
+
+The API owns the encrypted state machine and must be deployed with registration
+disabled until this additive migration and the chat consent page are ready.
