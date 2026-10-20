@@ -19,3 +19,14 @@ python3 -m unittest discover -s tests -p 'test_scheduled_posts.py'
 ```
 
 Runs on a disposable local cluster (CI: PostgreSQL 15 and 16).
+
+## artist_account_id
+
+`20261019200000_scheduled_posts_artist_account_id.sql` adds `artist_account_id`, the artist whose
+connected social account posts ([recoupable/app#2248](https://github.com/recoupable/app/issues/2248)).
+`account_id` is the account the post is made in and charged to, never an artist; `NULL` artist means
+the account's own connection posted. The artist column cascades on delete, like `account_id`.
+
+```sh
+python3 -m unittest discover -s tests -p 'test_scheduled_posts*.py'
+```
