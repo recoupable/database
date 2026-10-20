@@ -30,3 +30,7 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 -m unittest discover -s tests -p 'test_credit_charge_receipts.py'
+      - name: Test single wallet identity
+        run: |
+          export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
+          python3 -m unittest discover -s tests -p 'test_credit_wallet_identity.py'
