@@ -6,7 +6,7 @@ Part of [Mono #209](https://github.com/recoupable/mono/issues/209), under [MCP O
 PG_BINDIR=/path/to/postgresql/bin tests/oauth/run.sh
 ```
 
-Requires Python 3 and PostgreSQL server binaries. The runner creates a new temporary cluster with no TCP listener, uses an isolated Unix socket, applies only the OAuth migration, runs tests, then stops and removes that cluster. It never reads DATABASE_URL or connects to Supabase. The bootstrap roles are test-only. It does not prove compatibility with the entire Supabase migration history.
+Requires Python 3 and PostgreSQL server binaries. The runner creates a new temporary cluster with no TCP listener, uses an isolated Unix socket, applies the OAuth migrations, runs tests, then stops and removes that cluster. It never reads DATABASE_URL or connects to Supabase. The bootstrap roles are test-only. It does not prove compatibility with the entire Supabase migration history.
 
 ## Adapter contract
 
@@ -26,7 +26,7 @@ This is a storage foundation. It does not enable OAuth, link Privy identities, c
 
 Do not delete revocation markers until all potential associated artifacts and in-flight issuance windows have expired. A future bounded maintenance operation can purge expired artifacts; this PR does not add a scheduler. Revocation reads are authoritative, without positive auth caching.
 
-Rollback: first disable OAuth issuance/callers. Do not drop tables holding active grants while clients still depend on them. Since this additive migration has no production callers yet, pre-launch rollback may drop the five functions and two new tables after confirming no OAuth deployment has been enabled. Never reset unrelated Supabase data.
+Rollback: first disable the affected issuance/callers. Do not drop OAuth tables or shared functions while existing clients still depend on them. For agent registration, disable the API and chat registration flags and leave the migration installed; existing OAuth flows remain compatible. If removing this feature before launch, first confirm no registration callers or active grants remain, then drop `oauth_store_compare_and_swap`, `oauth_store_purge_agent_registrations`, and `oauth_agent_registration_expiry_idx`, and restore the prior `oauth_store_upsert` definition from `20261008010000_oauth_persistent_connections.sql`. Never reset unrelated Supabase data.
 
 Local validation uses PostgreSQL 17. CI uses the Ubuntu runner package version and prints that version; it does not claim to pin PostgreSQL 17. Secondary uid/user_code indexes are unique within namespace/model. Collisions fail closed; callers must not remap an existing provider identity to another record.
 
@@ -45,12 +45,17 @@ have one winner, expired or revoked records cannot be changed, revocation wins
 against late updates, and only `service_role` can execute the function. The function
 is restricted to `RecoupAgentRegistration`; it does not mutate OAuth token models,
 indices, bindings, expiry, or consumption markers.
+Generic upserts can insert a registration but cannot overwrite it. Tests cover a
+stale save racing with an approval and verify that bindings, expiry, and consumption
+markers remain unchanged.
 
 `oauth_store_purge_agent_registrations` is also service-role-only. Each call selects
-at most 100 expired registration families within one issuer, deletes their expired
+at most 100 expired registration families within one issuer using a partial index
+ordered by namespace, expiry, and identifier. It deletes their expired
 artifacts, and preserves active artifacts and all revocation tombstones. The API
 calls it before creating a new registration; no scheduler or broad OAuth cleanup is
-introduced. Tests verify issuer isolation, permissions, and the batch bound.
+introduced. Tests verify the exact surviving families, permissions, the batch bound,
+and an index-supported batch lookup without a global scan or sort.
 
 The API owns the encrypted state machine and must be deployed with registration
 disabled until this additive migration and the chat consent page are ready.

@@ -29,13 +29,10 @@ fi
 "$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261006150000_oauth_connected_apps.sql" >/dev/null
 "$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261006170000_oauth_grant_binding_integrity.sql" >/dev/null
 "$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261008010000_oauth_persistent_connections.sql" >/dev/null
+"$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261020040000_oauth_agent_registration_cas.sql" >/dev/null
 "$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/tests/oauth_persistent_connections.sql" >/dev/null
 python3 "$repo_root/tests/oauth/test_store.py"
 python3 "$repo_root/tests/oauth/test_identity.py"
-agent_migration="$repo_root/supabase/migrations/20261020040000_oauth_agent_registration_cas.sql"
-if [[ -f "$agent_migration" ]]; then
-  "$pg_bin/psql" "${psql_args[@]}" -f "$agent_migration" >/dev/null
-fi
 python3 "$repo_root/tests/oauth/test_agent_registration.py" AgentRegistrationTest
 
 "$pg_bin/psql" "${psql_args[@]}" -f "$repo_root/supabase/migrations/20261006190000_oauth_rate_limits.sql" >/dev/null

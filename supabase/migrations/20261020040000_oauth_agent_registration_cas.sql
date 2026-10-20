@@ -2,6 +2,52 @@
 -- The API owns the state machine; the database compares ciphertext, never decrypts it.
 BEGIN;
 
+-- Registrations are inserted once; all later writes must compare the ciphertext.
+-- Preserve the existing upsert contract for every other provider model.
+CREATE OR REPLACE FUNCTION public.oauth_store_upsert(
+  p_namespace text, p_model text, p_id_hash text, p_payload text,
+  p_expires_in integer, p_grant_hash text, p_uid_hash text, p_user_code_hash text, p_account_hash text DEFAULT NULL
+) RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+  bound_grant text := CASE WHEN p_model = 'Grant' THEN p_id_hash ELSE p_grant_hash END;
+BEGIN
+  IF (p_expires_in IS NULL AND p_model NOT IN ('Client', 'Grant', 'RecoupGrant', 'RefreshToken'))
+    OR (p_expires_in IS NOT NULL AND (p_expires_in < 1 OR p_expires_in > 2678400)) THEN
+    RAISE EXCEPTION 'Invalid OAuth artifact lifetime' USING ERRCODE = '22023';
+  END IF;
+  IF bound_grant IS NOT NULL THEN
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_namespace || ':' || bound_grant, 0));
+    IF EXISTS (SELECT 1 FROM public.oauth_revoked_grants WHERE namespace = p_namespace AND grant_hash = bound_grant) THEN
+      RAISE EXCEPTION 'OAuth grant is revoked' USING ERRCODE = '22023';
+    END IF;
+  END IF;
+  INSERT INTO public.oauth_provider_artifacts (
+    namespace, model, id_hash, payload, expires_at, grant_hash, uid_hash, user_code_hash, account_hash
+  ) VALUES (
+    p_namespace, p_model, p_id_hash, p_payload,
+    CASE WHEN p_expires_in IS NULL THEN NULL ELSE clock_timestamp() + p_expires_in * interval '1 second' END,
+    bound_grant, p_uid_hash, p_user_code_hash, p_account_hash
+  ) ON CONFLICT (namespace, model, id_hash) DO UPDATE SET
+    payload = EXCLUDED.payload,
+    expires_at = EXCLUDED.expires_at,
+    uid_hash = EXCLUDED.uid_hash,
+    user_code_hash = EXCLUDED.user_code_hash
+    WHERE p_model <> 'RecoupAgentRegistration'
+      AND public.oauth_provider_artifacts.grant_hash IS NOT DISTINCT FROM EXCLUDED.grant_hash
+      AND public.oauth_provider_artifacts.account_hash IS NOT DISTINCT FROM EXCLUDED.account_hash
+      AND (public.oauth_provider_artifacts.expires_at IS NULL OR EXCLUDED.expires_at IS NOT NULL);
+  IF NOT FOUND THEN
+    IF p_model = 'RecoupAgentRegistration' THEN
+      RAISE EXCEPTION 'Agent registration updates require compare-and-swap' USING ERRCODE = '22023';
+    END IF;
+    RAISE EXCEPTION 'OAuth artifact binding or finite lifetime cannot change' USING ERRCODE = '22023';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.oauth_store_upsert(text,text,text,text,integer,text,text,text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.oauth_store_upsert(text,text,text,text,integer,text,text,text,text) TO service_role;
+
 CREATE FUNCTION public.oauth_store_compare_and_swap(
   p_namespace text, p_model text, p_id_hash text,
   p_expected_payload text, p_payload text
@@ -40,6 +86,10 @@ GRANT EXECUTE ON FUNCTION public.oauth_store_compare_and_swap(text,text,text,tex
 
 -- Bound cleanup to 100 expired ceremonies per new registration. Keep revocation
 -- tombstones: a delayed credential save must never restore a disconnected grant.
+CREATE INDEX oauth_agent_registration_expiry_idx
+  ON public.oauth_provider_artifacts(namespace, expires_at, id_hash)
+  WHERE model = 'RecoupAgentRegistration' AND grant_hash = id_hash;
+
 CREATE FUNCTION public.oauth_store_purge_agent_registrations(p_namespace text)
 RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE deleted_count integer;
