@@ -41,3 +41,31 @@ real transaction suite, preserved evidence, explicit enrollment and deployment l
 Run `python3 -m unittest discover -s tests -p 'test_player_org_fans.py'` on disposable local PostgreSQL. The suite applies the actual `20261010100000_player_organization_contacts.sql` migration to legacy synthetic fan data and exercises backfill, stable relationship/session IDs, latest non-null contact profiles, parallel sign-ins, separate provider identities despite identical emails, cross-workspace isolation, browser-role denial and existing playback/reporting behavior. CI runs both player suites on PostgreSQL 15 and 16.
 
 Rollout: apply the contact migration before deploying API readers of `contact_id` / `player_fan_contacts`. Existing `connect_player_fan` callers continue working through the new trigger. Artist relationships keep their original IDs; sessions and events are not reassigned. Workspace contacts never merge by email/name or across owners. The migration locks player_fans while backfilling and installing its composite identity FK; new connections can wait briefly during deployment. On API rollback, retain the additive contact schema and trigger so previously deployed capture still maintains contacts. Do not drop the new contacts or remove relationship/session history as a rollback shortcut. Live post-deployment verification is still required.
+
+## Professional artist accounts
+
+Apply `20261023160000_professional_artist_accounts.sql` before deploying the API
+and app changes that require `professional.artist_id`. This field references
+`accounts.id`, using the existing artist terminology and workflows. New confirmed
+professionals use `create_artist_with_roster` in the same transaction as roles and
+request receipts. Existing professional IDs keep their linked account. Roster
+intent remains explicit; research and name similarity never enroll or merge people.
+
+The migration backfills legacy records and extends saved receipts with the account
+link without changing their role snapshots. It contains a guarded, explicitly
+confirmed Sidney Swift mapping to the existing artist account; environments
+without that professional skip it. Changed prerequisites abort the migration.
+Other legacy people receive distinct organization-owned accounts, including when
+the original confirmer has left. No catalog, credit or royalty data is assigned.
+
+Run `python3 -m unittest discover -s tests -p 'test_professional_roster.py'`
+with PostgreSQL binaries on PATH. The disposable fixture covers real transactions,
+parallel retries, rollback of account/profile/roster creation, existing account
+reuse, picker-query membership, revoked access, legacy upgrade and old receipt
+replay. It does not prove production deployment or authenticated browser behavior.
+
+Roll out in order: database migration, API, app. Keep the additive schema and
+linked accounts on app/API rollback; reverting the function to role-only inserts
+would violate the required artist link. Production acceptance should read the
+saved artist_id, confirm the same ID in GET /api/artists for the organization,
+and select it after save and after a fresh page load.
