@@ -51,6 +51,20 @@ begin
    saved.fingerprint,'reviewed','','pre-migration-retry');
   raise exception 'TEST_FAILURE: pre-migration fingerprint accepted';
  exception when serialization_failure then null; end;
+ -- Save a second immutable receipt against the newly installed projection.
+ set local role service_role;
+ receipt:=public.review_context_release_case(saved.actor,saved.owner_id,saved.request_id,
+  projection->>'fingerprint','reviewed','Reviewed format observation','post-migration-review');
+ receipt:=public.read_context_release_case_review(saved.actor,saved.owner_id,(receipt->>'id')::uuid);
+ reset role;
+ if receipt->>'state' is distinct from 'saved' or receipt->>'stale' is distinct from 'false'
+ or receipt->'snapshot'->'release_format' is distinct from projection->'release_format'
+ or receipt->'snapshot'->>'fingerprint' is distinct from projection->>'fingerprint'
+ or receipt->>'id'=saved.review_id::text then
+  raise exception 'New-projection receipt was not independently saved and current';
+ end if;
+ create temporary table upgraded_receipt as select (receipt->>'id')::uuid as review_id,
+  receipt->'snapshot' as snapshot;
 end $$;
 """
         verify_rollback = """
@@ -65,7 +79,18 @@ begin
  or receipt->'snapshot' is distinct from saved.snapshot then
   raise exception 'Rollback failed to restore projection or preserve review history';
  end if;
- raise notice 'PASS: migration invalidation, stale-write rejection, immutable history and function rollback';
+ -- Read both receipts after rollback; neither snapshot may be rewritten or hidden.
+ if receipt->>'state' is distinct from 'saved' then
+  raise exception 'Rollback hid the pre-migration receipt';
+ end if;
+ receipt:=public.read_context_release_case_review(saved.actor,saved.owner_id,
+  (select review_id from upgraded_receipt));
+ if receipt->>'state' is distinct from 'saved' or receipt->>'stale' is distinct from 'true'
+ or receipt->'snapshot' is distinct from (select snapshot from upgraded_receipt)
+ or not (receipt->'snapshot' ? 'release_format') then
+  raise exception 'Rollback lost or rewrote the new receipt, or failed to mark it stale';
+ end if;
+ raise notice 'PASS: migration invalidation, stale-write rejection, both immutable snapshots retained, new receipt stale after rollback';
 end $$;
 rollback;
 """
