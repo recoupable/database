@@ -175,6 +175,11 @@ begin
   jsonb_build_array(jsonb_build_object('disc_number',1)),jsonb_build_object('extent','full','collectedSlots',1,'reportedTotal',3));
  if format->>'track_coverage' is distinct from 'partial' or format->'disc_count' is distinct from 'null'::jsonb or format->'multi_disc' is distinct from 'null'::jsonb
  then raise exception 'Mismatched slot count was treated as full coverage: %',format; end if;
+ -- Disc zero is invalid, matching the positive-number track-slot constraint.
+ format:=public.project_context_release_format('{"album_type":"album"}', '[{"disc_number":0}]',
+  '{"extent":"full","reportedTotal":1}');
+ if format->'disc_count' is distinct from 'null'::jsonb or format->'multi_disc' is distinct from 'null'::jsonb
+ then raise exception 'Invalid disc zero became a definite disc structure: %',format; end if;
  -- Helper edge cases: absent or unexpected provider values stay unknown; an unavailable slot leaves the disc count unknown.
  format:=public.project_context_release_format(jsonb_build_object('id',repeat('A',22),'name','No type'),
   jsonb_build_array(jsonb_build_object('disc_number',1),'null'::jsonb,jsonb_build_object('disc_number','x')),

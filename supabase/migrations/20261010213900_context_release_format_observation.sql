@@ -32,7 +32,7 @@ returns jsonb language sql immutable set search_path='' as $$
   'physical_format','unknown')
  from (select count(*) as slots,count(*) filter (where s.numbered) as numbered,
    max(case when s.numbered then (s.slot->>'disc_number')::integer end) as highest
-  from (select slot,coalesce(jsonb_typeof(slot)='object' and slot->>'disc_number' ~ '^[0-9]{1,9}$',false) as numbered
+  from (select slot,coalesce(jsonb_typeof(slot)='object' and slot->>'disc_number' ~ '^[1-9][0-9]{0,8}$',false) as numbered
    from jsonb_array_elements(case when jsonb_typeof(p_tracks)='array' then p_tracks else '[]'::jsonb end) slot) s) discs
  cross join lateral (select coalesce(jsonb_typeof(p_album)='object',false) as collected,
    -- Full only when the collector reported full extent and every reported slot is present.
