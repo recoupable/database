@@ -90,10 +90,37 @@ class Protocol(unittest.TestCase):
         return self.cmd('write', {**token, 'id': self.chat+id, 'role':role,'parts':{'id':self.chat+id,'role':role,'parts':parts or []},'mode':mode})
 
     def release(self, token):
-        return self.cmd('release', {**token, 'reason':'terminal'})
+        return self.cmd('release', {**token, 'reason':'external_terminal'})
 
     def delete(self, epoch, key=None):
         return self.cmd('delete', {'request_id':key or str(uuid.uuid4()),'expected_epoch':epoch,'anchor_id':self.chat+'message'})
+
+    def test_original_closed_run_receipt_write_outcomes_and_self_completion(self):
+        key=str(uuid.uuid4());token=self.bind(self.admit(key=key),'original-run')
+        payload={'request_id':key,'expected_epoch':0,'input_hash':'a'*64}
+        self.assertEqual(self.cmd('admit',payload)['bound_run_id'],'original-run')
+        self.assertEqual(self.write(token)['outcome'],'inserted')
+        self.assertEqual(self.write(token)['outcome'],'exactDuplicate')
+        self.assertEqual(self.write(token,parts=[{'type':'text','text':'changed'}])['outcome'],'updated')
+        self.assertEqual(self.write(token,'user',role='user',mode='insert')['outcome'],'inserted')
+        self.assertEqual(self.write(token,'user',role='user',mode='insert')['outcome'],'exactDuplicate')
+        with self.assertRaisesRegex(AssertionError,'duplicate input conflict'):
+            self.write(token,'user',role='user',mode='insert',parts=[{'type':'text','text':'different'}])
+        for reason in ('terminal','timeout','confirmed_no_start'):
+            with self.assertRaisesRegex(AssertionError,'release proof'):
+                self.cmd('release',{**token,'reason':reason})
+        with self.assertRaisesRegex(AssertionError,'release proof'):
+            self.cmd('release',{**token,'run_id':'loser','reason':'workflow_complete'})
+        self.assertTrue(self.cmd('release',{**token,'reason':'workflow_complete'})['released'])
+        with self.assertRaisesRegex(AssertionError,'stale writer'):self.write(token)
+        new=self.bind(self.admit(1),'new-run')
+        closed=self.cmd('admit',payload)
+        self.assertTrue(closed['closed'])
+        self.assertEqual(closed['bound_run_id'],'original-run')
+        self.assertEqual(self.cmd('state',{})['run_id'],'new-run')
+        self.assertFalse(self.cmd('release',{**token,'reason':'workflow_complete'})['released'])
+        self.assertEqual(self.write(new,'user',role='user',mode='insert')['outcome'],'exactDuplicate')
+        self.assertEqual(self.cmd('admit',payload),closed)
 
     def test_late_user_stale_assistant_update_parts_and_tombstone(self):
         token = self.bind(self.admit())
@@ -127,7 +154,7 @@ class Protocol(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'already bound'):
             self.bind(token,'duplicate-run')
         self.write(first)
-        self.assertFalse(self.cmd('release',{**token,'epoch':0,'reason':'terminal','run_id':'first-run'})['released'])
+        self.assertFalse(self.cmd('release',{**token,'epoch':0,'reason':'external_terminal','run_id':'first-run'})['released'])
         self.assertEqual(self.cmd('state',{})['run_id'],'first-run')
 
     def test_crash_retry_receipts_and_owner_cleanup(self):

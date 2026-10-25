@@ -26,7 +26,7 @@ CREATE TABLE chat_fence.state (
 CREATE TABLE chat_fence.turns (
  chat_id text NOT NULL REFERENCES chat_fence.state(chat_id), request_id uuid NOT NULL,
  input_hash text NOT NULL, expected_epoch bigint NOT NULL, epoch bigint NOT NULL,
- closed boolean NOT NULL DEFAULT false, PRIMARY KEY(chat_id,request_id)
+ bound_run_id text, closed boolean NOT NULL DEFAULT false, PRIMARY KEY(chat_id,request_id)
 );
 CREATE TABLE chat_fence.message_epochs (
  message_id text PRIMARY KEY REFERENCES public.chat_messages(id) ON DELETE CASCADE,
@@ -154,7 +154,7 @@ CREATE FUNCTION public.chat_fence_command(p_chat text, p_account uuid, p_action 
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE sid text; s chat_fence.state; t chat_fence.turns; d chat_fence.deletions;
  m public.chat_messages; a public.chat_messages; receipt jsonb; n bigint;
- request uuid; expected bigint; token uuid; generation bigint; mode text;
+ request uuid; expected bigint; token uuid; generation bigint; mode text; outcome text;
 BEGIN
  IF p_action IS NULL OR p_action NOT IN ('state','admit','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
   RAISE EXCEPTION 'unsupported command or payload' USING ERRCODE='22023';
@@ -175,7 +175,7 @@ BEGIN
   IF request IS NULL OR expected IS NULL THEN RAISE EXCEPTION 'missing retry identity'; END IF;
  END IF;
  IF p_action='admit' THEN
-  IF p->>'input_hash' IS NULL OR length(p->>'input_hash')<>64 THEN RAISE EXCEPTION 'invalid input hash'; END IF;
+  IF p->>'input_hash' IS NULL OR (p->>'input_hash') !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'invalid input hash'; END IF;
   SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=request;
   IF FOUND THEN
    IF t.input_hash<>p->>'input_hash' OR t.expected_epoch<>expected THEN RAISE EXCEPTION 'retry input conflict' USING ERRCODE='22023'; END IF;
@@ -183,7 +183,7 @@ BEGIN
   END IF;
   IF s.phase<>'idle' OR s.epoch<>expected THEN RAISE EXCEPTION 'admission conflict' USING ERRCODE='40001'; END IF;
   UPDATE chat_fence.state SET epoch=epoch+1,owner=request,phase='pending' WHERE chat_id=p_chat RETURNING * INTO s;
-  INSERT INTO chat_fence.turns VALUES(p_chat,request,p->>'input_hash',expected,s.epoch,false) RETURNING * INTO t;
+  INSERT INTO chat_fence.turns VALUES(p_chat,request,p->>'input_hash',expected,s.epoch,NULL,false) RETURNING * INTO t;
   UPDATE public.chats SET active_stream_id='pending-'||request::text WHERE id=p_chat;
   RETURN to_jsonb(t);
  END IF;
@@ -215,12 +215,13 @@ BEGIN
  IF p_action='bind' THEN
   IF coalesce(p->>'run_id','')='' OR p->>'run_id' LIKE 'pending-%' THEN RAISE EXCEPTION 'invalid run'; END IF;
   IF s.run_id IS NOT NULL AND s.run_id<>p->>'run_id' THEN RAISE EXCEPTION 'run already bound' USING ERRCODE='40001'; END IF;
+  UPDATE chat_fence.turns SET bound_run_id=p->>'run_id' WHERE chat_id=p_chat AND request_id=token AND bound_run_id IS NULL;
   UPDATE chat_fence.state SET phase='running',run_id=p->>'run_id' WHERE chat_id=p_chat;
   UPDATE public.chats SET active_stream_id=p->>'run_id' WHERE id=p_chat;
   RETURN jsonb_build_object('bound',true);
  END IF;
  IF p_action='release' THEN
-  IF (s.phase='running' AND (p->>'reason' IS DISTINCT FROM 'terminal' OR p->>'run_id' IS DISTINCT FROM s.run_id)) OR
+  IF (s.phase='running' AND (coalesce(p->>'reason','') NOT IN ('workflow_complete','external_terminal') OR p->>'run_id' IS DISTINCT FROM s.run_id)) OR
      (s.phase='pending' AND p->>'reason' IS DISTINCT FROM 'confirmed_no_start') THEN RAISE EXCEPTION 'release proof required'; END IF;
   UPDATE chat_fence.turns SET closed=true WHERE chat_id=p_chat AND request_id=token;
   UPDATE chat_fence.state SET owner=NULL,phase='idle',run_id=NULL WHERE chat_id=p_chat;
@@ -252,16 +253,23 @@ BEGIN
  IF m.id IS NULL THEN
   INSERT INTO public.chat_messages(id,chat_id,role,parts) VALUES(p->>'id',p_chat,p->>'role',p->'parts');
   INSERT INTO chat_fence.message_epochs VALUES(p->>'id',p_chat,s.epoch);
+  outcome := 'inserted';
  ELSE
   IF m.role<>p->>'role' THEN RAISE EXCEPTION 'immutable message role'; END IF;
   IF mode='insert' THEN
+   outcome := 'exactDuplicate';
    IF m.parts IS DISTINCT FROM p->'parts' THEN RAISE EXCEPTION 'duplicate input conflict' USING ERRCODE='22023'; END IF;
   ELSE
    IF NOT EXISTS(SELECT 1 FROM chat_fence.message_epochs WHERE message_id=m.id AND chat_id=p_chat AND epoch=s.epoch) THEN RAISE EXCEPTION 'prior message generation' USING ERRCODE='40001'; END IF;
-   UPDATE public.chat_messages SET parts=p->'parts' WHERE id=m.id AND chat_id=p_chat;
+   IF m.parts IS NOT DISTINCT FROM p->'parts' THEN
+    outcome := 'exactDuplicate';
+   ELSE
+    UPDATE public.chat_messages SET parts=p->'parts' WHERE id=m.id AND chat_id=p_chat;
+    outcome := 'updated';
+   END IF;
   END IF;
  END IF;
- RETURN jsonb_build_object('written',true);
+ RETURN jsonb_build_object('written',true,'outcome',outcome);
 END $$;
 ALTER FUNCTION public.chat_fence_command(text,uuid,text,jsonb) OWNER TO recoup_chat_fence_owner;
 REVOKE ALL ON FUNCTION public.chat_fence_command(text,uuid,text,jsonb) FROM PUBLIC,anon,authenticated;
