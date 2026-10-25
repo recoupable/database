@@ -112,6 +112,70 @@ class Protocol(unittest.TestCase):
     def delete(self, epoch, key=None):
         return self.cmd('delete', {'request_id':key or str(uuid.uuid4()),'expected_epoch':epoch,'anchor_id':self.chat+'message'})
 
+    def test_close_unattempted_and_claim_serialize_both_orders(self):
+        for first_action in ('claim_dispatch','close_unattempted'):
+            token=self.admit(self.cmd('state',{})['epoch'])
+            original=self.cmd('admission_snapshot',{'request_id':token['owner']})
+            self.assertEqual(original['dispatch']['status'],'never_attempted')
+            claim={**token,'attempt_id':str(uuid.uuid4())}
+            first_payload=claim if first_action=='claim_dispatch' else token
+            second_action='close_unattempted' if first_action=='claim_dispatch' else 'claim_dispatch'
+            second_payload=token if second_action=='close_unattempted' else claim
+            process=subprocess.Popen(self.args(),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
+            try:
+                process.stdin.write('BEGIN; '+self.command_sql(first_action,first_payload)+" SELECT 'LOCKED';\n");process.stdin.flush()
+                while process.stdout.readline().strip()!='LOCKED':
+                    if process.poll() is not None:self.fail('first transaction terminated')
+                with concurrent.futures.ThreadPoolExecutor(1) as ex:
+                    future=ex.submit(self.cmd,second_action,second_payload)
+                    deadline=time.monotonic()+4
+                    while int(self.sql(f"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%{self.chat}%' AND pid<>pg_backend_pid()"))<1:
+                        if time.monotonic()>deadline:self.fail('second caller did not reach real lock wait')
+                        time.sleep(.02)
+                    self.assertFalse(future.done())
+                    process.stdin.write('COMMIT;\n');process.stdin.flush()
+                    result=future.result(timeout=5)
+                if first_action=='claim_dispatch':
+                    self.assertEqual(result,{'closed':False})
+                    self.assertEqual(self.cmd('state',{})['owner'],token['owner'])
+                    self.assertFalse(self.cmd('admission_snapshot',{'request_id':token['owner']})['receipt']['closed'])
+                    # Separate reconciliation route: synthetic authoritative proof only.
+                    self.cmd('release',{**token,'reason':'confirmed_no_start'})
+                else:
+                    self.assertFalse(result['claimed']);self.assertIsNone(result['attempt_id'])
+                    self.assertTrue(result['receipt']['closed'])
+                    self.assertEqual(self.cmd('state',{})['phase'],'idle')
+                after=self.cmd('admission_snapshot',{'request_id':token['owner']})
+                for field in ('admission_envelope','execution_snapshot','admission_canonical','execution_canonical'):
+                    self.assertEqual(after[field],original[field])
+            finally:
+                process.stdin.close();process.wait(timeout=5);process.stdout.close();process.stderr.close()
+
+    def test_close_unattempted_retry_rollback_scope_and_new_owner(self):
+        token=self.admit()
+        with self.assertRaisesRegex(AssertionError,'release proof'):
+            self.cmd('release',{**token,'reason':'confirmed_no_start'})
+        with self.assertRaisesRegex(AssertionError,'ownership denied'):
+            self.cmd('close_unattempted',token,account=OTHER)
+        for role in ('anon','authenticated'):
+            with self.assertRaisesRegex(AssertionError,'permission denied'):
+                self.sql(self.command_sql('close_unattempted',token).replace('SET ROLE service_role',f'SET ROLE {role}'))
+        self.assertEqual(self.cmd('close_unattempted',{**token,'epoch':0}),{'closed':False})
+        self.assertEqual(self.cmd('close_unattempted',{**token,'owner':str(uuid.uuid4())}),{'closed':False})
+        with self.assertRaisesRegex(AssertionError,'missing close identity'):self.cmd('close_unattempted',{})
+        self.sql('BEGIN; '+self.command_sql('close_unattempted',token)+' ROLLBACK;')
+        self.assertFalse(self.cmd('admission_snapshot',{'request_id':token['owner']})['receipt']['closed'])
+        self.assertEqual(self.cmd('state',{})['phase'],'pending')
+        self.assertEqual(self.cmd('close_unattempted',token),{'closed':True})
+        self.assertEqual(self.cmd('close_unattempted',token),{'closed':False})
+        new=self.bind(self.admit(1),'new-bound-run')
+        self.assertEqual(self.cmd('close_unattempted',token),{'closed':False})
+        self.assertEqual(self.cmd('close_unattempted',new),{'closed':False})
+        self.assertEqual(self.cmd('state',{})['run_id'],'new-bound-run')
+        closed=self.cmd('admission_snapshot',{'request_id':token['owner']})
+        self.assertTrue(closed['receipt']['closed']);self.assertIsNone(closed['receipt']['bound_run_id'])
+        self.assertEqual(closed['dispatch']['status'],'never_attempted')
+
     def test_dispatch_one_shot_concurrent_claim_and_response_loss(self):
         token=self.admit();attempts=[str(uuid.uuid4()),str(uuid.uuid4())]
         with self.assertRaisesRegex(AssertionError,'dispatch claim required'):
@@ -154,7 +218,7 @@ class Protocol(unittest.TestCase):
                 self.sql(self.command_sql('claim_dispatch',payload).replace('SET ROLE service_role',f'SET ROLE {role}'))
         with self.assertRaisesRegex(AssertionError,'permission denied'):
             self.sql("SET ROLE service_role; UPDATE chat_fence.turns SET dispatch_attempt_id=NULL")
-        self.assertTrue(self.cmd('release',{**token,'reason':'confirmed_no_start'})['released'])
+        self.assertTrue(self.cmd('close_unattempted',token)['closed'])
         result=self.cmd('claim_dispatch',payload)
         self.assertFalse(result['claimed']);self.assertIsNone(result['attempt_id']);self.assertTrue(result['receipt']['closed'])
         new=self.admit(1);claim=self.cmd('claim_dispatch',{**new,'attempt_id':str(uuid.uuid4())})
@@ -336,7 +400,7 @@ class Protocol(unittest.TestCase):
         token=self.admit(key=key)
         with self.assertRaisesRegex(AssertionError,'release proof'):
             self.cmd('release',{**token,'reason':'timeout'})
-        self.assertTrue(self.cmd('release',{**token,'reason':'confirmed_no_start'})['released'])
+        self.assertTrue(self.cmd('close_unattempted',token)['closed'])
         new=self.admit(1)
         with self.assertRaisesRegex(AssertionError,'stale writer'):self.bind(token)
         self.assertEqual(self.cmd('state',{})['owner'],new['owner'])

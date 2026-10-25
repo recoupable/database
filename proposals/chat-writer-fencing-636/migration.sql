@@ -158,7 +158,7 @@ DECLARE sid text; s chat_fence.state; t chat_fence.turns; d chat_fence.deletions
  m public.chat_messages; a public.chat_messages; receipt jsonb; n bigint;
  request uuid; expected bigint; token uuid; generation bigint; mode text; outcome text; attempt uuid;
 BEGIN
- IF p_action IS NULL OR p_action NOT IN ('state','admission_snapshot','admit','claim_dispatch','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
+ IF p_action IS NULL OR p_action NOT IN ('state','admission_snapshot','admit','claim_dispatch','close_unattempted','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
   RAISE EXCEPTION 'unsupported command or payload' USING ERRCODE='22023';
  END IF;
  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
@@ -249,6 +249,18 @@ BEGIN
   RETURN receipt;
  END IF;
  token := (p->>'owner')::uuid; generation := (p->>'epoch')::bigint;
+ IF p_action='close_unattempted' THEN
+  IF token IS NULL OR generation IS NULL THEN RAISE EXCEPTION 'missing close identity' USING ERRCODE='22023'; END IF;
+  SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=token;
+  IF NOT FOUND OR t.epoch<>generation OR t.closed OR t.dispatch_attempt_id IS NOT NULL
+    OR s.owner IS DISTINCT FROM token OR s.epoch<>generation OR s.phase<>'pending' THEN
+   RETURN jsonb_build_object('closed',false);
+  END IF;
+  UPDATE chat_fence.turns SET closed=true WHERE chat_id=p_chat AND request_id=token;
+  UPDATE chat_fence.state SET owner=NULL,phase='idle',run_id=NULL WHERE chat_id=p_chat;
+  UPDATE public.chats SET active_stream_id=NULL WHERE id=p_chat;
+  RETURN jsonb_build_object('closed',true);
+ END IF;
  IF p_action='claim_dispatch' THEN
   attempt := (p->>'attempt_id')::uuid;
   IF token IS NULL OR generation IS NULL OR attempt IS NULL THEN RAISE EXCEPTION 'missing dispatch identity' USING ERRCODE='22023'; END IF;
@@ -280,8 +292,9 @@ BEGIN
   RETURN jsonb_build_object('bound',true);
  END IF;
  IF p_action='release' THEN
+  SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=token;
   IF (s.phase='running' AND (coalesce(p->>'reason','') NOT IN ('workflow_complete','external_terminal') OR p->>'run_id' IS DISTINCT FROM s.run_id)) OR
-     (s.phase='pending' AND p->>'reason' IS DISTINCT FROM 'confirmed_no_start') THEN RAISE EXCEPTION 'release proof required'; END IF;
+     (s.phase='pending' AND (p->>'reason' IS DISTINCT FROM 'confirmed_no_start' OR t.dispatch_attempt_id IS NULL)) THEN RAISE EXCEPTION 'release proof required'; END IF;
   UPDATE chat_fence.turns SET closed=true WHERE chat_id=p_chat AND request_id=token;
   UPDATE chat_fence.state SET owner=NULL,phase='idle',run_id=NULL WHERE chat_id=p_chat;
   UPDATE public.chats SET active_stream_id=NULL WHERE id=p_chat;
