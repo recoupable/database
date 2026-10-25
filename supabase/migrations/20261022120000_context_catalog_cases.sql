@@ -35,8 +35,8 @@ returns void language plpgsql set search_path='' as $$
 declare group_name text; item record; ref jsonb; source_row jsonb; linked uuid; actual integer; seen text[]:='{}';
 begin
  if p_snapshot is null or jsonb_typeof(p_snapshot)<>'object' or octet_length(p_snapshot::text)>1048576
- or p_snapshot->>'schema_version' is distinct from '1' or p_snapshot->>'case_id' is distinct from p_case::text
- or p_snapshot->>'workspace_id' is distinct from p_owner::text or p_snapshot->>'revision' is distinct from p_expected::text
+ or p_snapshot->>'schema_version' is distinct from '1' or lower(p_snapshot->>'case_id') is distinct from p_case::text
+ or lower(p_snapshot->>'workspace_id') is distinct from p_owner::text or p_snapshot->>'revision' is distinct from p_expected::text
  or jsonb_typeof(p_snapshot->'scope') is distinct from 'string' or p_snapshot ? 'history'
  then raise exception 'Invalid catalog snapshot' using errcode='22023'; end if;
  if exists(select 1 from jsonb_object_keys(p_snapshot) k where k not in ('schema_version','case_id','workspace_id','revision','scope','sources','assessments','findings','actions','attempts','outcomes'))
@@ -69,6 +69,10 @@ begin
       and ((r.snapshot->'sources'->item.key->>'sha256' is distinct from item.value->>'sha256')
        or (r.snapshot->'sources'->item.key->>'context_source_version_id' is distinct from item.value->>'context_source_version_id')))
     then raise exception 'Source version binding is immutable' using errcode='22023'; end if;
+    if item.value->>'context_source_version_id' is not null and exists (
+      select 1 from public.context_source_versions v where v.id=(item.value->>'context_source_version_id')::uuid
+       and v.owner_id=p_owner and v.fingerprint is distinct from item.value->>'sha256')
+    then raise exception 'Catalog source hash does not match Context version' using errcode='22023'; end if;
    else
     if jsonb_typeof(item.value->'source_refs') is distinct from 'array' or coalesce(item.value->>'rule_version','')=''
     then raise exception 'Derived record requires versioned evidence' using errcode='22023'; end if;

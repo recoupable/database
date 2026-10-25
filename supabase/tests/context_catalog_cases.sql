@@ -2,7 +2,7 @@ begin;
 do $$
 declare owner uuid:=gen_random_uuid(); member uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid();
  case_id uuid:=gen_random_uuid(); second_case uuid:=gen_random_uuid(); source uuid:=gen_random_uuid(); version uuid:=gen_random_uuid();
- original_snapshot jsonb; new_version uuid:=gen_random_uuid(); foreign_source uuid:=gen_random_uuid(); foreign_version uuid:=gen_random_uuid(); snapshot jsonb; receipt jsonb; replay jsonb;
+ original_snapshot jsonb; new_version uuid:=gen_random_uuid(); foreign_source uuid:=gen_random_uuid(); foreign_version uuid:=gen_random_uuid(); snapshot jsonb; receipt jsonb; replay jsonb; second_page jsonb;
 begin
  insert into public.accounts(id,name) values(owner,'Synthetic catalog workspace'),(member,'Synthetic member'),(outsider,'Other workspace');
  insert into public.account_organization_ids(account_id,organization_id) values(member,owner);
@@ -15,6 +15,11 @@ begin
   'f2',jsonb_build_object('id','f2','stage','audit','status','open','cause_id','cause2','rule_version','v1','summary','Independent gap','evidence_gap','Missing contract','source_refs','[]'::jsonb),
   'f3',jsonb_build_object('id','f3','stage','audit','status','open','cause_id','cause1','rule_version','v1','summary','PRIVATE DEPENDENT','evidence_gap','Dependent result','source_refs','[]'::jsonb,'depends_on',jsonb_build_array('f1'))),
  'actions','{}'::jsonb,'attempts','{}'::jsonb,'outcomes','{}'::jsonb);
+ snapshot:=jsonb_set(jsonb_set(snapshot,'{case_id}',to_jsonb(upper(case_id::text))),'{workspace_id}',to_jsonb(upper(owner::text)));
+ begin
+  perform public.save_context_catalog_case(member,owner,case_id,0,'bad-hash',jsonb_set(snapshot,'{sources,s1,sha256}',to_jsonb(repeat('d',64))));
+  raise exception 'TEST_FAILURE: linked hash mismatch accepted';
+ exception when sqlstate '22023' then null; end;
  original_snapshot:=snapshot;
  set local role service_role;
  receipt:=public.save_context_catalog_case(member,owner,case_id,0,'save-1',snapshot);
@@ -51,7 +56,9 @@ begin
  perform public.save_context_catalog_case(member,owner,second_case,0,'case-2',snapshot);
  receipt:=public.list_context_catalog_cases(member,owner,null,1);
  if receipt->>'has_more' is distinct from 'true' or receipt->>'next_id' is null then raise exception 'Paging missing cursor'; end if;
- if jsonb_array_length(public.list_context_catalog_cases(member,owner,(receipt->>'next_id')::uuid,1)->'cases')<>1 then raise exception 'Paging repeated/lost case'; end if;
+ second_page:=public.list_context_catalog_cases(member,owner,(receipt->>'next_id')::uuid,1);
+ if jsonb_array_length(second_page->'cases')<>1 or second_page->'cases'->0->>'case_id' is not distinct from receipt->'cases'->0->>'case_id'
+ then raise exception 'Paging repeated/lost case'; end if;
  begin
   perform public.list_context_catalog_cases(member,owner,gen_random_uuid(),1);
   raise exception 'TEST_FAILURE: invalid cursor accepted';
