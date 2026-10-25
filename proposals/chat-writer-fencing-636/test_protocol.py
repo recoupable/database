@@ -96,7 +96,11 @@ class Protocol(unittest.TestCase):
         return {'owner': key, 'epoch': result['epoch']}
 
     def bind(self, token, run='run-1'):
-        self.cmd('bind', {**token, 'run_id': run})
+        dispatch=self.cmd('admission_snapshot',{'request_id':token['owner']})['dispatch']
+        attempt=dispatch['attempt_id'] or str(uuid.uuid4())
+        if dispatch['attempt_id'] is None:
+            self.cmd('claim_dispatch',{**token,'attempt_id':attempt})
+        self.cmd('bind', {**token, 'run_id': run,'attempt_id':attempt})
         return {**token, 'run_id': run}
 
     def write(self, token, id='message', role='assistant', parts=None, mode='upsert'):
@@ -107,6 +111,57 @@ class Protocol(unittest.TestCase):
 
     def delete(self, epoch, key=None):
         return self.cmd('delete', {'request_id':key or str(uuid.uuid4()),'expected_epoch':epoch,'anchor_id':self.chat+'message'})
+
+    def test_dispatch_one_shot_concurrent_claim_and_response_loss(self):
+        token=self.admit();attempts=[str(uuid.uuid4()),str(uuid.uuid4())]
+        with self.assertRaisesRegex(AssertionError,'dispatch claim required'):
+            self.cmd('bind',{**token,'run_id':'unclaimed'})
+        self.assertEqual(self.cmd('admission_snapshot',{'request_id':token['owner']})['dispatch'],{'status':'never_attempted','attempt_id':None})
+        with concurrent.futures.ThreadPoolExecutor(2) as ex:
+            results=list(ex.map(lambda attempt:self.cmd('claim_dispatch',{**token,'attempt_id':attempt}),attempts))
+        self.assertEqual(sum(r['claimed'] for r in results),1)
+        winner=next(r for r in results if r['claimed'])
+        self.assertTrue(all(r['attempt_id']==winner['attempt_id'] for r in results))
+        # Treat a lost winning claim response as ambiguous; replay never grants start.
+        retry=self.cmd('claim_dispatch',{**token,'attempt_id':winner['attempt_id']})
+        self.assertFalse(retry['claimed']);self.assertEqual(retry['receipt'],winner['receipt'])
+        self.assertEqual(self.cmd('admission_snapshot',{'request_id':token['owner']})['dispatch'],{'status':'claimed','attempt_id':winner['attempt_id']})
+        self.assertEqual(self.cmd('state',{})['phase'],'pending')
+        with self.assertRaisesRegex(AssertionError,'dispatch claim required'):
+            self.cmd('bind',{**token,'run_id':'wrong-attempt','attempt_id':str(uuid.uuid4())})
+        with self.assertRaisesRegex(AssertionError,'release proof'):
+            self.cmd('release',{**token,'reason':'timeout'})
+        # The provider can bind before its start response reaches the dispatch caller.
+        self.cmd('bind',{**token,'run_id':'original-run','attempt_id':winner['attempt_id']})
+        self.assertFalse(self.cmd('claim_dispatch',{**token,'attempt_id':str(uuid.uuid4())})['claimed'])
+        original={**token,'run_id':'original-run'};self.write(original);self.release(original)
+        new=self.bind(self.admit(1),'new-run')
+        replay=self.cmd('claim_dispatch',{**token,'attempt_id':winner['attempt_id']})
+        self.assertFalse(replay['claimed']);self.assertTrue(replay['receipt']['closed'])
+        self.assertEqual(replay['receipt']['bound_run_id'],'original-run')
+        self.assertEqual(self.cmd('state',{})['run_id'],'new-run')
+        self.assertFalse(self.release(original)['released'])
+
+    def test_dispatch_claim_rollback_scope_and_closed_never_attempted(self):
+        token=self.admit();attempt=str(uuid.uuid4());payload={**token,'attempt_id':attempt}
+        self.sql('BEGIN; '+self.command_sql('claim_dispatch',payload)+' ROLLBACK;')
+        self.assertEqual(self.cmd('admission_snapshot',{'request_id':token['owner']})['dispatch']['status'],'never_attempted')
+        with self.assertRaisesRegex(AssertionError,'ownership denied'):self.cmd('claim_dispatch',payload,account=OTHER)
+        with self.assertRaisesRegex(AssertionError,'stale dispatch authority'):self.cmd('claim_dispatch',{**payload,'epoch':0})
+        with self.assertRaisesRegex(AssertionError,'missing dispatch identity'):self.cmd('claim_dispatch',token)
+        for role in ['anon','authenticated']:
+            with self.assertRaisesRegex(AssertionError,'permission denied'):
+                self.sql(self.command_sql('claim_dispatch',payload).replace('SET ROLE service_role',f'SET ROLE {role}'))
+        with self.assertRaisesRegex(AssertionError,'permission denied'):
+            self.sql("SET ROLE service_role; UPDATE chat_fence.turns SET dispatch_attempt_id=NULL")
+        self.assertTrue(self.cmd('release',{**token,'reason':'confirmed_no_start'})['released'])
+        result=self.cmd('claim_dispatch',payload)
+        self.assertFalse(result['claimed']);self.assertIsNone(result['attempt_id']);self.assertTrue(result['receipt']['closed'])
+        new=self.admit(1);claim=self.cmd('claim_dispatch',{**new,'attempt_id':str(uuid.uuid4())})
+        self.assertTrue(claim['claimed'])
+        # Even authoritative no-start closure does not reset or reclaim that intent.
+        self.cmd('release',{**new,'reason':'confirmed_no_start'})
+        self.assertFalse(self.cmd('claim_dispatch',{**new,'attempt_id':claim['attempt_id']})['claimed'])
 
     def test_snapshot_tampering_scope_and_original_closed_retrieval(self):
         import copy

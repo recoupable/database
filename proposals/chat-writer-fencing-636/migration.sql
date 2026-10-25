@@ -28,7 +28,7 @@ CREATE TABLE chat_fence.turns (
  input_hash text NOT NULL, expected_epoch bigint NOT NULL, epoch bigint NOT NULL,
  admission_envelope jsonb NOT NULL, execution_snapshot jsonb NOT NULL,
  admission_canonical text NOT NULL, execution_canonical text NOT NULL,
- bound_run_id text, closed boolean NOT NULL DEFAULT false, PRIMARY KEY(chat_id,request_id)
+ dispatch_attempt_id uuid, bound_run_id text, closed boolean NOT NULL DEFAULT false, PRIMARY KEY(chat_id,request_id)
 );
 CREATE TABLE chat_fence.message_epochs (
  message_id text PRIMARY KEY REFERENCES public.chat_messages(id) ON DELETE CASCADE,
@@ -156,9 +156,9 @@ CREATE FUNCTION public.chat_fence_command(p_chat text, p_account uuid, p_action 
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE sid text; s chat_fence.state; t chat_fence.turns; d chat_fence.deletions;
  m public.chat_messages; a public.chat_messages; receipt jsonb; n bigint;
- request uuid; expected bigint; token uuid; generation bigint; mode text; outcome text;
+ request uuid; expected bigint; token uuid; generation bigint; mode text; outcome text; attempt uuid;
 BEGIN
- IF p_action IS NULL OR p_action NOT IN ('state','admission_snapshot','admit','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
+ IF p_action IS NULL OR p_action NOT IN ('state','admission_snapshot','admit','claim_dispatch','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
   RAISE EXCEPTION 'unsupported command or payload' USING ERRCODE='22023';
  END IF;
  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
@@ -177,9 +177,10 @@ BEGIN
   IF request IS NULL THEN RAISE EXCEPTION 'missing retry identity' USING ERRCODE='22023'; END IF;
   SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=request;
   IF NOT FOUND THEN RAISE EXCEPTION 'admission snapshot missing' USING ERRCODE='P0002'; END IF;
-  RETURN jsonb_build_object('receipt',to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical'],
+  RETURN jsonb_build_object('receipt',to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical','dispatch_attempt_id'],
    'admission_envelope',t.admission_envelope,'execution_snapshot',t.execution_snapshot,
-   'admission_canonical',t.admission_canonical,'execution_canonical',t.execution_canonical);
+   'admission_canonical',t.admission_canonical,'execution_canonical',t.execution_canonical,
+   'dispatch',jsonb_build_object('status',CASE WHEN t.dispatch_attempt_id IS NULL THEN 'never_attempted' ELSE 'claimed' END,'attempt_id',t.dispatch_attempt_id));
  END IF;
  IF p_action IN ('admit','delete') THEN
   request := (p->>'request_id')::uuid; expected := (p->>'expected_epoch')::bigint;
@@ -219,13 +220,13 @@ BEGIN
   SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=request;
   IF FOUND THEN
    IF t.input_hash<>p->>'input_hash' OR t.expected_epoch<>expected OR t.admission_canonical IS DISTINCT FROM p->>'admission_canonical' OR t.execution_canonical IS DISTINCT FROM p->>'execution_canonical' OR t.admission_envelope IS DISTINCT FROM p->'admission_envelope' OR t.execution_snapshot IS DISTINCT FROM p->'execution_snapshot' THEN RAISE EXCEPTION 'retry input conflict' USING ERRCODE='22023'; END IF;
-   RETURN to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical']; -- Replay never allocates a new owner or authorizes redispatch.
+   RETURN to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical','dispatch_attempt_id']; -- Replay never allocates a new owner or authorizes redispatch.
   END IF;
   IF s.phase<>'idle' OR s.epoch<>expected THEN RAISE EXCEPTION 'admission conflict' USING ERRCODE='40001'; END IF;
   UPDATE chat_fence.state SET epoch=epoch+1,owner=request,phase='pending' WHERE chat_id=p_chat RETURNING * INTO s;
-  INSERT INTO chat_fence.turns VALUES(p_chat,request,p->>'input_hash',expected,s.epoch,p->'admission_envelope',p->'execution_snapshot',p->>'admission_canonical',p->>'execution_canonical',NULL,false) RETURNING * INTO t;
+  INSERT INTO chat_fence.turns VALUES(p_chat,request,p->>'input_hash',expected,s.epoch,p->'admission_envelope',p->'execution_snapshot',p->>'admission_canonical',p->>'execution_canonical',NULL,NULL,false) RETURNING * INTO t;
   UPDATE public.chats SET active_stream_id='pending-'||request::text WHERE id=p_chat;
-  RETURN to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical'];
+  RETURN to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical','dispatch_attempt_id'];
  END IF;
  IF p_action='delete' THEN
   SELECT * INTO d FROM chat_fence.deletions WHERE chat_id=p_chat AND request_id=request;
@@ -248,11 +249,29 @@ BEGIN
   RETURN receipt;
  END IF;
  token := (p->>'owner')::uuid; generation := (p->>'epoch')::bigint;
+ IF p_action='claim_dispatch' THEN
+  attempt := (p->>'attempt_id')::uuid;
+  IF token IS NULL OR generation IS NULL OR attempt IS NULL THEN RAISE EXCEPTION 'missing dispatch identity' USING ERRCODE='22023'; END IF;
+  SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=token;
+  IF NOT FOUND OR t.epoch<>generation THEN RAISE EXCEPTION 'stale dispatch authority' USING ERRCODE='40001'; END IF;
+  -- A replay NEVER reauthorizes start, even for the exact same attempt UUID.
+  IF t.dispatch_attempt_id IS NOT NULL OR t.closed OR s.owner IS DISTINCT FROM token OR s.epoch<>generation OR s.phase<>'pending' THEN
+   RETURN jsonb_build_object('claimed',false,'attempt_id',t.dispatch_attempt_id,
+    'receipt',to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical','dispatch_attempt_id']);
+  END IF;
+  UPDATE chat_fence.turns SET dispatch_attempt_id=attempt WHERE chat_id=p_chat AND request_id=token RETURNING * INTO t;
+  RETURN jsonb_build_object('claimed',true,'attempt_id',attempt,
+   'receipt',to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical','dispatch_attempt_id']);
+ END IF;
  IF token IS NULL OR generation IS NULL OR s.owner IS DISTINCT FROM token OR s.epoch<>generation OR s.phase='idle' THEN
   IF p_action='release' THEN RETURN jsonb_build_object('released',false); END IF;
   RAISE EXCEPTION 'stale writer' USING ERRCODE='40001';
  END IF;
  IF p_action='bind' THEN
+  SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=token;
+  IF t.dispatch_attempt_id IS NULL OR t.dispatch_attempt_id IS DISTINCT FROM (p->>'attempt_id')::uuid THEN
+   RAISE EXCEPTION 'dispatch claim required' USING ERRCODE='40001';
+  END IF;
   IF coalesce(p->>'run_id','')='' OR p->>'run_id' LIKE 'pending-%' THEN RAISE EXCEPTION 'invalid run'; END IF;
   IF s.run_id IS NOT NULL AND s.run_id<>p->>'run_id' THEN RAISE EXCEPTION 'run already bound' USING ERRCODE='40001'; END IF;
   UPDATE chat_fence.turns SET bound_run_id=p->>'run_id' WHERE chat_id=p_chat AND request_id=token AND bound_run_id IS NULL;
