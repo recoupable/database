@@ -86,3 +86,40 @@ If application rollout fails, revert the dependent API/UI changes first and reta
 the additive table and receipts. Do not drop historical review data as a routine
 rollback. Any later schema removal requires a separate reviewed retention/export
 plan. Existing Context collection paths are unchanged.
+
+## Portable catalog cases
+
+`20261022120000_context_catalog_cases.sql` stores versioned private catalog case
+artifacts without requiring an artist, recording, catalog ID or ingestion request.
+It reuses `authorize_context_case_actor`, Context source versions and the existing
+workspace-membership lock. Apply the Context foundation, release-case authorization
+and membership-lock prerequisites before this additive migration.
+
+Service-only RPCs are `save_context_catalog_case`, `read_context_catalog_case` and
+`list_context_catalog_cases`. Each takes the authenticated actor and resolved owner.
+Save uses an expected revision, workspace-scoped idempotency key and a portable
+version-1 snapshot (at most 1 MiB; 1,000 records per collection). Revision history
+is immutable; pagination uses stable creation order. Source links use existing
+Context version IDs and are checked within the transaction. Revoking membership
+blocks future access. Withdrawing linked evidence redacts that source and its
+transitive dependent records, including historical reads, while preserving unrelated
+work. A redacted snapshot is visibly partial and cannot be blindly saved.
+
+All saved content is labeled `customer_assertion`. Storage does not authenticate
+contracts, grant provider authority, calculate royalties or execute actions. Local
+file references remain private supplied assertions, not hosted original uploads.
+The independent local calculators retain their controlled outputs as referenced
+artifacts; no second financial calculation is implemented in SQL. API must enforce
+the complete typed record schema in addition to these persistence checks.
+
+Run synthetic transaction tests with a functioning PostgreSQL installation:
+
+```sh
+python3 -m unittest discover -s tests -p test_catalog_cases.py
+```
+
+The harness uses a disposable Unix-socket-only cluster, actual prerequisite SQL and
+synthetic fixtures. Local tests and CI do not apply a production migration. Roll out
+the contract, database migration, then dependent API operations; verify authenticated
+HTTP/MCP readback separately. Roll back the API before schema changes and retain
+case history; deleting persisted work requires a separate retention decision.
