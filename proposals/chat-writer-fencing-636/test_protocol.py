@@ -1,6 +1,7 @@
 """Actual draft SQL on a disposable socket-only PostgreSQL cluster. No remote DSN."""
 import concurrent.futures
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -71,7 +72,19 @@ class Protocol(unittest.TestCase):
         self.sql(f"INSERT INTO sessions(id,account_id,title) VALUES({quote(self.chat)},'{ACCOUNT}','synthetic'); INSERT INTO chats(id,session_id,title) VALUES({quote(self.chat)},{quote(self.chat)},'synthetic');")
         self.sql(f"SELECT public.enable_chat_fence({quote(self.chat)},'{ACCOUNT}')")
 
+    def snapshot_payload(self, data, chat=None, account=ACCOUNT):
+        chat=chat or self.chat
+        snapshot={'contractVersion':'chat-execution/v1','effectiveAccountId':account,'chatId':chat,'sessionId':chat,'id':'snapshot-'+data['request_id'],'requestId':data['request_id'],'content':{'modelId':'synthetic','credentialIdentity':{'accountId':account,'id':'reference-only'}}}
+        canonical=lambda value:json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False)
+        digest=lambda value:hashlib.sha256(value.encode('utf8')).hexdigest()
+        snapshot_bytes=canonical(snapshot)
+        envelope={'contractVersion':'chat-admission/v1','effectiveAccountId':account,'chatId':chat,'sessionId':chat,'expectedEpoch':data['expected_epoch'],'messages':[{'id':'synthetic-user','role':'user','parts':[{'type':'text','text':'changed' if data.get('input_hash')=='b'*64 else 'original'}]}],'options':{'modelId':'synthetic','artistId':None,'interactive':True,'devSurface':None},'executionSnapshot':{'id':snapshot['id'],'digest':digest(snapshot_bytes)}}
+        envelope_bytes=canonical(envelope)
+        return {**data,'input_hash':digest(envelope_bytes),'admission_envelope':envelope,'execution_snapshot':snapshot,'admission_canonical':envelope_bytes,'execution_canonical':snapshot_bytes}
+
     def command_sql(self, action, data, chat=None, account=ACCOUNT):
+        if action=='admit' and 'admission_envelope' not in data:
+            data=self.snapshot_payload(data,chat,account)
         return f"SET ROLE service_role; SELECT public.chat_fence_command({quote(chat or self.chat)},'{account}',{quote(action)},{quote(json.dumps(data))}::jsonb);"
 
     def cmd(self, action, data, **kw):
@@ -94,6 +107,70 @@ class Protocol(unittest.TestCase):
 
     def delete(self, epoch, key=None):
         return self.cmd('delete', {'request_id':key or str(uuid.uuid4()),'expected_epoch':epoch,'anchor_id':self.chat+'message'})
+
+    def test_snapshot_tampering_scope_and_original_closed_retrieval(self):
+        import copy
+        key=str(uuid.uuid4());payload=self.snapshot_payload({'request_id':key,'expected_epoch':0})
+        def rehash(value):
+            value['execution_canonical']=json.dumps(value['execution_snapshot'],sort_keys=True,separators=(',',':'))
+            value['admission_envelope']['executionSnapshot']['digest']=hashlib.sha256(value['execution_canonical'].encode()).hexdigest()
+            value['admission_canonical']=json.dumps(value['admission_envelope'],sort_keys=True,separators=(',',':'))
+            value['input_hash']=hashlib.sha256(value['admission_canonical'].encode()).hexdigest()
+            return value
+        for field in ['input_hash','admission_canonical','execution_canonical']:
+            bad=copy.deepcopy(payload)
+            bad[field]='f'*64 if field=='input_hash' else '{}'
+            with self.assertRaisesRegex(AssertionError,'bytes or digest mismatch'):self.cmd('admit',bad)
+        bad=copy.deepcopy(payload);bad['execution_snapshot']['content']['modelId']='tampered'
+        with self.assertRaisesRegex(AssertionError,'bytes or digest mismatch'):self.cmd('admit',bad)
+        for field,value in [('effectiveAccountId',OTHER),('chatId','another-chat'),('sessionId','another-session'),('requestId',str(uuid.uuid4())),('contractVersion','chat-execution/v2'),('id','rebound-id')]:
+            bad=copy.deepcopy(payload);bad['execution_snapshot'][field]=value
+            with self.assertRaisesRegex(AssertionError,'scope or version mismatch'):self.cmd('admit',rehash(bad))
+        receipt=self.cmd('admit',payload)
+        # SQL binds supplied bytes; it does not claim ECMAScript canonicalization.
+        alternate=copy.deepcopy(payload)
+        alternate['admission_canonical']=json.dumps(alternate['admission_envelope'],indent=2)
+        alternate['input_hash']=hashlib.sha256(alternate['admission_canonical'].encode()).hexdigest()
+        with self.assertRaisesRegex(AssertionError,'retry input conflict'):self.cmd('admit',alternate)
+        stored=self.cmd('admission_snapshot',{'request_id':key})
+        self.assertEqual(stored['receipt'],receipt)
+        for field in ['admission_envelope','execution_snapshot','admission_canonical','execution_canonical']:self.assertEqual(stored[field],payload[field])
+        bad=copy.deepcopy(payload);bad['execution_snapshot']['content']['modelId']='rebound-content'
+        with self.assertRaisesRegex(AssertionError,'retry input conflict'):self.cmd('admit',rehash(bad))
+        with self.assertRaisesRegex(AssertionError,'ownership denied'):self.cmd('admission_snapshot',{'request_id':key},account=OTHER)
+        with self.assertRaisesRegex(AssertionError,'snapshot missing'):self.cmd('admission_snapshot',{'request_id':str(uuid.uuid4())})
+        with self.assertRaisesRegex(AssertionError,'permission denied'):self.sql("SET ROLE service_role; UPDATE chat_fence.turns SET execution_snapshot='{}'")
+        token=self.bind({'owner':key,'epoch':receipt['epoch']},'original-snapshot-run');self.release(token)
+        self.bind(self.admit(1),'new-owner-run')
+        closed=self.cmd('admission_snapshot',{'request_id':key})
+        self.assertTrue(closed['receipt']['closed']);self.assertEqual(closed['receipt']['bound_run_id'],'original-snapshot-run')
+        for field in ['admission_envelope','execution_snapshot','admission_canonical','execution_canonical']:self.assertEqual(closed[field],stored[field])
+        self.assertEqual(self.cmd('state',{})['run_id'],'new-owner-run')
+
+    def test_snapshot_concurrent_retry_atomic_rollback_and_cross_chat_lookup(self):
+        key=str(uuid.uuid4());payload=self.snapshot_payload({'request_id':key,'expected_epoch':0})
+        self.sql('BEGIN; '+self.command_sql('admit',payload)+' ROLLBACK;')
+        with self.assertRaisesRegex(AssertionError,'snapshot missing'):self.cmd('admission_snapshot',{'request_id':key})
+        self.assertEqual(self.cmd('state',{})['epoch'],0)
+        with concurrent.futures.ThreadPoolExecutor(2) as ex:
+            results=list(ex.map(lambda _:self.cmd('admit',payload),range(2)))
+        self.assertEqual(results[0],results[1]);self.assertEqual(self.cmd('state',{})['epoch'],1)
+        self.assertEqual(self.cmd('admission_snapshot',{'request_id':key})['receipt'],results[0])
+        changed=self.snapshot_payload({'request_id':key,'expected_epoch':0,'input_hash':'b'*64})
+        def replay(candidate):
+            try:return self.cmd('admit',candidate)
+            except AssertionError as error:
+                self.assertIn('retry input conflict',str(error));return None
+        with concurrent.futures.ThreadPoolExecutor(2) as ex:
+            replayed=list(ex.map(replay,[payload,changed]))
+        self.assertEqual(replayed,[results[0],None])
+        self.assertEqual(self.cmd('admission_snapshot',{'request_id':key})['admission_envelope'],payload['admission_envelope'])
+        other='other-snapshot-'+str(uuid.uuid4())
+        self.sql(f"INSERT INTO sessions(id,account_id,title) VALUES('{other}','{ACCOUNT}','synthetic'); INSERT INTO chats(id,session_id,title) VALUES('{other}','{other}','synthetic'); SELECT enable_chat_fence('{other}','{ACCOUNT}')")
+        with self.assertRaisesRegex(AssertionError,'snapshot missing'):self.cmd('admission_snapshot',{'request_id':key},chat=other)
+        for role in ['anon','authenticated']:
+            with self.assertRaisesRegex(AssertionError,'permission denied'):
+                self.sql(self.command_sql('admission_snapshot',{'request_id':key}).replace('SET ROLE service_role',f'SET ROLE {role}'))
 
     def test_original_closed_run_receipt_write_outcomes_and_self_completion(self):
         key=str(uuid.uuid4());token=self.bind(self.admit(key=key),'original-run')

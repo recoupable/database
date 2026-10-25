@@ -26,6 +26,8 @@ CREATE TABLE chat_fence.state (
 CREATE TABLE chat_fence.turns (
  chat_id text NOT NULL REFERENCES chat_fence.state(chat_id), request_id uuid NOT NULL,
  input_hash text NOT NULL, expected_epoch bigint NOT NULL, epoch bigint NOT NULL,
+ admission_envelope jsonb NOT NULL, execution_snapshot jsonb NOT NULL,
+ admission_canonical text NOT NULL, execution_canonical text NOT NULL,
  bound_run_id text, closed boolean NOT NULL DEFAULT false, PRIMARY KEY(chat_id,request_id)
 );
 CREATE TABLE chat_fence.message_epochs (
@@ -156,7 +158,7 @@ DECLARE sid text; s chat_fence.state; t chat_fence.turns; d chat_fence.deletions
  m public.chat_messages; a public.chat_messages; receipt jsonb; n bigint;
  request uuid; expected bigint; token uuid; generation bigint; mode text; outcome text;
 BEGIN
- IF p_action IS NULL OR p_action NOT IN ('state','admit','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
+ IF p_action IS NULL OR p_action NOT IN ('state','admission_snapshot','admit','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
   RAISE EXCEPTION 'unsupported command or payload' USING ERRCODE='22023';
  END IF;
  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
@@ -170,22 +172,60 @@ BEGIN
  SELECT * INTO s FROM chat_fence.state WHERE chat_id=p_chat FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'chat fence not enabled' USING ERRCODE='55000'; END IF;
  IF p_action='state' THEN RETURN to_jsonb(s); END IF;
+ IF p_action='admission_snapshot' THEN
+  request := (p->>'request_id')::uuid;
+  IF request IS NULL THEN RAISE EXCEPTION 'missing retry identity' USING ERRCODE='22023'; END IF;
+  SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=request;
+  IF NOT FOUND THEN RAISE EXCEPTION 'admission snapshot missing' USING ERRCODE='P0002'; END IF;
+  RETURN jsonb_build_object('receipt',to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical'],
+   'admission_envelope',t.admission_envelope,'execution_snapshot',t.execution_snapshot,
+   'admission_canonical',t.admission_canonical,'execution_canonical',t.execution_canonical);
+ END IF;
  IF p_action IN ('admit','delete') THEN
   request := (p->>'request_id')::uuid; expected := (p->>'expected_epoch')::bigint;
   IF request IS NULL OR expected IS NULL THEN RAISE EXCEPTION 'missing retry identity'; END IF;
  END IF;
  IF p_action='admit' THEN
   IF p->>'input_hash' IS NULL OR (p->>'input_hash') !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'invalid input hash'; END IF;
+  -- Verify supplied UTF-8 bytes, never PostgreSQL JSONB serialization as canonical.
+  IF jsonb_typeof(p->'admission_envelope') IS DISTINCT FROM 'object'
+    OR jsonb_typeof(p->'execution_snapshot') IS DISTINCT FROM 'object'
+    OR jsonb_typeof(p->'admission_canonical') IS DISTINCT FROM 'string'
+    OR jsonb_typeof(p->'execution_canonical') IS DISTINCT FROM 'string' THEN
+   RAISE EXCEPTION 'missing admission snapshot material' USING ERRCODE='22023';
+  END IF;
+  IF (p->>'admission_canonical')::jsonb IS DISTINCT FROM p->'admission_envelope'
+    OR (p->>'execution_canonical')::jsonb IS DISTINCT FROM p->'execution_snapshot'
+    OR encode(sha256(convert_to(p->>'admission_canonical','UTF8')),'hex') IS DISTINCT FROM p->>'input_hash'
+    OR encode(sha256(convert_to(p->>'execution_canonical','UTF8')),'hex') IS DISTINCT FROM p->'admission_envelope'->'executionSnapshot'->>'digest' THEN
+   RAISE EXCEPTION 'snapshot bytes or digest mismatch' USING ERRCODE='22023';
+  END IF;
+  IF p->'admission_envelope'->>'contractVersion' IS DISTINCT FROM 'chat-admission/v1'
+    OR p->'admission_envelope'->>'effectiveAccountId' IS DISTINCT FROM p_account::text
+    OR p->'admission_envelope'->>'chatId' IS DISTINCT FROM p_chat
+    OR p->'admission_envelope'->>'sessionId' IS DISTINCT FROM sid
+    OR p->'admission_envelope'->'expectedEpoch' IS DISTINCT FROM to_jsonb(expected)
+    OR p->'execution_snapshot'->>'contractVersion' IS DISTINCT FROM 'chat-execution/v1'
+    OR p->'execution_snapshot'->>'effectiveAccountId' IS DISTINCT FROM p_account::text
+    OR p->'execution_snapshot'->>'chatId' IS DISTINCT FROM p_chat
+    OR p->'execution_snapshot'->>'sessionId' IS DISTINCT FROM sid
+    OR p->'execution_snapshot'->>'requestId' IS DISTINCT FROM request::text
+    OR jsonb_typeof(p->'execution_snapshot'->'id') IS DISTINCT FROM 'string'
+    OR coalesce(p->'execution_snapshot'->>'id','')=''
+    OR p->'execution_snapshot'->>'id' IS DISTINCT FROM p->'admission_envelope'->'executionSnapshot'->>'id'
+    OR jsonb_typeof(p->'execution_snapshot'->'content') IS DISTINCT FROM 'object' THEN
+   RAISE EXCEPTION 'snapshot scope or version mismatch' USING ERRCODE='22023';
+  END IF;
   SELECT * INTO t FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=request;
   IF FOUND THEN
-   IF t.input_hash<>p->>'input_hash' OR t.expected_epoch<>expected THEN RAISE EXCEPTION 'retry input conflict' USING ERRCODE='22023'; END IF;
-   RETURN to_jsonb(t); -- Replay never allocates a new owner or authorizes redispatch.
+   IF t.input_hash<>p->>'input_hash' OR t.expected_epoch<>expected OR t.admission_canonical IS DISTINCT FROM p->>'admission_canonical' OR t.execution_canonical IS DISTINCT FROM p->>'execution_canonical' OR t.admission_envelope IS DISTINCT FROM p->'admission_envelope' OR t.execution_snapshot IS DISTINCT FROM p->'execution_snapshot' THEN RAISE EXCEPTION 'retry input conflict' USING ERRCODE='22023'; END IF;
+   RETURN to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical']; -- Replay never allocates a new owner or authorizes redispatch.
   END IF;
   IF s.phase<>'idle' OR s.epoch<>expected THEN RAISE EXCEPTION 'admission conflict' USING ERRCODE='40001'; END IF;
   UPDATE chat_fence.state SET epoch=epoch+1,owner=request,phase='pending' WHERE chat_id=p_chat RETURNING * INTO s;
-  INSERT INTO chat_fence.turns VALUES(p_chat,request,p->>'input_hash',expected,s.epoch,NULL,false) RETURNING * INTO t;
+  INSERT INTO chat_fence.turns VALUES(p_chat,request,p->>'input_hash',expected,s.epoch,p->'admission_envelope',p->'execution_snapshot',p->>'admission_canonical',p->>'execution_canonical',NULL,false) RETURNING * INTO t;
   UPDATE public.chats SET active_stream_id='pending-'||request::text WHERE id=p_chat;
-  RETURN to_jsonb(t);
+  RETURN to_jsonb(t)-ARRAY['admission_envelope','execution_snapshot','admission_canonical','execution_canonical'];
  END IF;
  IF p_action='delete' THEN
   SELECT * INTO d FROM chat_fence.deletions WHERE chat_id=p_chat AND request_id=request;
