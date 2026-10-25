@@ -123,3 +123,19 @@ synthetic fixtures. Local tests and CI do not apply a production migration. Roll
 the contract, database migration, then dependent API operations; verify authenticated
 HTTP/MCP readback separately. Roll back the API before schema changes and retain
 case history; deleting persisted work requires a separate retention decision.
+
+## Draft chat writer-fencing protocol (#636)
+
+[Protocol and rollout proposal](proposals/chat-writer-fencing-636/PROTOCOL.md) covers
+shared admission, persistence and deletion authority. Its executable SQL is outside
+`supabase/migrations`: it is not an approved migration or activation. The disposable
+harness applies the actual chat baseline plus the proposal to synthetic local data:
+
+```sh
+PG_BIN=/path/to/postgresql/bin python3 proposals/chat-writer-fencing-636/test_protocol.py
+```
+
+The proposal includes pre-activation rollback, role/guard checks and concurrency
+reproductions. API adapters, workflow-first binding, old-worker drainage, production
+prerequisite checks and root-approved activation remain required. No runtime cutover
+is included; the published quiescent-only DELETE contract remains in effect.
