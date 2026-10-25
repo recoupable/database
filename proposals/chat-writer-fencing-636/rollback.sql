@@ -9,6 +9,7 @@ DO $$ BEGIN
  END IF;
 END $$;
 DROP TRIGGER chat_fence_message ON public.chat_messages;
+DROP TRIGGER chat_fence_identity_after ON public.chat_messages;
 DROP TRIGGER chat_fence_message_truncate ON public.chat_messages;
 DROP TRIGGER chat_fence_chat ON public.chats;
 DROP TRIGGER chat_fence_chat_truncate ON public.chats;
@@ -18,6 +19,7 @@ DROP FUNCTION public.chat_fence_command(text,uuid,text,jsonb);
 DROP FUNCTION public.enable_chat_fence(text,uuid);
 DROP FUNCTION public.guard_chat_fence_message();
 DROP FUNCTION public.guard_chat_fence_parent();
+DROP FUNCTION public.guard_chat_fence_identity_after();
 DROP SCHEMA chat_fence CASCADE;
 DROP POLICY chat_fence_messages ON public.chat_messages;
 DROP POLICY chat_fence_chats ON public.chats;

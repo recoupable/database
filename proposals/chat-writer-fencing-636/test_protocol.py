@@ -272,4 +272,28 @@ class Protocol(unittest.TestCase):
         self.assertEqual(self.sql(f"SELECT count(*) FROM chat_messages WHERE id='{chat}-bulk'"),'0')
 
 
+    def test_cross_chat_legacy_insert_waiting_on_delete_cannot_reuse_identity(self):
+        token=self.bind(self.admit());self.write(token);self.release(token)
+        other='legacy-target-'+str(uuid.uuid4())
+        self.sql(f"INSERT INTO sessions(id,account_id,title) VALUES('{other}','{ACCOUNT}','synthetic'); INSERT INTO chats(id,session_id,title) VALUES('{other}','{other}','synthetic');")
+        process=subprocess.Popen(self.args(),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
+        try:
+            payload={'request_id':str(uuid.uuid4()),'expected_epoch':1,'anchor_id':self.chat+'message'}
+            process.stdin.write('BEGIN; '+self.command_sql('delete',payload)+" SELECT 'LOCKED';\n");process.stdin.flush()
+            while process.stdout.readline().strip()!='LOCKED':
+                if process.poll() is not None:self.fail('delete holder terminated')
+            sql=f"SET ROLE service_role; INSERT INTO chat_messages(id,chat_id,role,parts) VALUES({quote(self.chat+'message')},'{other}','user','{{}}')"
+            with concurrent.futures.ThreadPoolExecutor(1) as ex:
+                future=ex.submit(self.sql,sql)
+                deadline=time.monotonic()+4
+                while int(self.sql(f"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%{other}%' AND pid<>pg_backend_pid()"))<1:
+                    if time.monotonic()>deadline:self.fail('legacy INSERT did not reach unique-index wait')
+                    time.sleep(.02)
+                process.stdin.write('COMMIT;\n');process.stdin.flush()
+                with self.assertRaisesRegex(AssertionError,'deleted identity'):future.result(timeout=5)
+            self.assertEqual(self.sql(f"SELECT count(*) FROM chat_messages WHERE id={quote(self.chat+'message')}"),'0')
+        finally:
+            process.stdin.close();process.wait(timeout=5);process.stdout.close();process.stderr.close()
+
+
 if __name__=='__main__': unittest.main(verbosity=2)

@@ -80,6 +80,19 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+-- READ COMMITTED AFTER recheck closes the cross-chat unique-index wait:
+-- a BEFORE check can precede an uncommitted tombstone, then wait for its DELETE.
+CREATE FUNCTION public.guard_chat_fence_identity_after() RETURNS trigger LANGUAGE plpgsql
+SET search_path = '' AS $$
+BEGIN
+ IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION 'chat fence requires READ COMMITTED' USING ERRCODE='0A000';
+ END IF;
+ IF EXISTS(SELECT 1 FROM chat_fence.tombstones WHERE message_id=NEW.id) THEN
+  RAISE EXCEPTION 'deleted identity cannot be reused after write' USING ERRCODE='40001';
+ END IF;
+ RETURN NEW;
+END $$;
 CREATE FUNCTION public.guard_chat_fence_parent() RETURNS trigger LANGUAGE plpgsql
 SET search_path = '' AS $$
 BEGIN
@@ -109,6 +122,7 @@ BEGIN
  RETURN NEW;
 END $$;
 CREATE TRIGGER chat_fence_message BEFORE INSERT OR UPDATE OR DELETE ON public.chat_messages FOR EACH ROW EXECUTE FUNCTION public.guard_chat_fence_message();
+CREATE TRIGGER chat_fence_identity_after AFTER INSERT OR UPDATE ON public.chat_messages FOR EACH ROW EXECUTE FUNCTION public.guard_chat_fence_identity_after();
 CREATE TRIGGER chat_fence_message_truncate BEFORE TRUNCATE ON public.chat_messages FOR EACH STATEMENT EXECUTE FUNCTION public.guard_chat_fence_message();
 CREATE TRIGGER chat_fence_chat BEFORE UPDATE OR DELETE ON public.chats FOR EACH ROW EXECUTE FUNCTION public.guard_chat_fence_parent();
 CREATE TRIGGER chat_fence_chat_truncate BEFORE TRUNCATE ON public.chats FOR EACH STATEMENT EXECUTE FUNCTION public.guard_chat_fence_parent();
@@ -252,5 +266,5 @@ END $$;
 ALTER FUNCTION public.chat_fence_command(text,uuid,text,jsonb) OWNER TO recoup_chat_fence_owner;
 REVOKE ALL ON FUNCTION public.chat_fence_command(text,uuid,text,jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.chat_fence_command(text,uuid,text,jsonb) TO service_role;
-REVOKE ALL ON FUNCTION public.guard_chat_fence_message(), public.guard_chat_fence_parent() FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION public.guard_chat_fence_message(), public.guard_chat_fence_parent(), public.guard_chat_fence_identity_after() FROM PUBLIC,anon,authenticated,service_role;
 COMMIT;
