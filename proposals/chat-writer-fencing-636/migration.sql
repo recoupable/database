@@ -40,6 +40,7 @@ CREATE TABLE chat_fence.tombstones (
 CREATE TABLE chat_fence.deletions (
  chat_id text NOT NULL REFERENCES chat_fence.state(chat_id), request_id uuid NOT NULL,
  anchor_id text NOT NULL, expected_epoch bigint NOT NULL, receipt jsonb NOT NULL,
+ edit_material jsonb CHECK (edit_material IS NULL OR jsonb_typeof(edit_material)='object'),
  PRIMARY KEY(chat_id,request_id)
 );
 RESET ROLE;
@@ -157,8 +158,12 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE sid text; s chat_fence.state; t chat_fence.turns; d chat_fence.deletions;
  m public.chat_messages; a public.chat_messages; receipt jsonb; n bigint;
  request uuid; expected bigint; token uuid; generation bigint; mode text; outcome text; attempt uuid;
+ material jsonb; capture jsonb; admission jsonb; envelope jsonb; execution jsonb; intent jsonb;
+ witness jsonb; messages jsonb; replacement jsonb; actual_history jsonb; prefix_messages jsonb;
+ item jsonb; part jsonb; shape record; node record; replacement_id text; admission_request uuid;
+ anchor_count integer; parts_count bigint; history_bytes bigint;
 BEGIN
- IF p_action IS NULL OR p_action NOT IN ('state','admission_snapshot','admit','claim_dispatch','close_unattempted','bind','write','update_parts','release','delete') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
+ IF p_action IS NULL OR p_action NOT IN ('state','admission_snapshot','admit','claim_dispatch','close_unattempted','bind','write','update_parts','release','delete','delete_edit','deletion_snapshot') OR p IS NULL OR jsonb_typeof(p)<>'object' THEN
   RAISE EXCEPTION 'unsupported command or payload' USING ERRCODE='22023';
  END IF;
  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
@@ -181,6 +186,171 @@ BEGIN
    'admission_envelope',t.admission_envelope,'execution_snapshot',t.execution_snapshot,
    'admission_canonical',t.admission_canonical,'execution_canonical',t.execution_canonical,
    'dispatch',jsonb_build_object('status',CASE WHEN t.dispatch_attempt_id IS NULL THEN 'never_attempted' ELSE 'claimed' END,'attempt_id',t.dispatch_attempt_id));
+ END IF;
+ -- New edit commands are strict; legacy parsing/limits remain unchanged.
+ IF p_action IN ('delete_edit','deletion_snapshot') THEN
+  IF (p_action='delete_edit' AND (NOT (p ?& ARRAY['request_id','expected_epoch','anchor_id','edit_material']) OR p-ARRAY['request_id','expected_epoch','anchor_id','edit_material']<>'{}'::jsonb))
+    OR (p_action='deletion_snapshot' AND (NOT (p ? 'request_id') OR p- 'request_id'<>'{}'::jsonb))
+    OR jsonb_typeof(p->'request_id') IS DISTINCT FROM 'string'
+    OR (p->>'request_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+   RAISE EXCEPTION 'invalid deletion command' USING ERRCODE='22023';
+  END IF;
+  request := (p->>'request_id')::uuid;
+  IF p_action='deletion_snapshot' THEN
+   SELECT * INTO d FROM chat_fence.deletions WHERE chat_id=p_chat AND request_id=request;
+   IF NOT FOUND THEN RAISE EXCEPTION 'deletion snapshot missing' USING ERRCODE='P0002'; END IF;
+   RETURN jsonb_build_object('receipt',d.receipt,'edit_material',d.edit_material);
+  END IF;
+  IF jsonb_typeof(p->'expected_epoch') IS DISTINCT FROM 'number' OR (p->>'expected_epoch') !~ '^(0|[1-9][0-9]*)$'
+    OR (p->>'expected_epoch')::numeric>9007199254740989
+    OR jsonb_typeof(p->'anchor_id') IS DISTINCT FROM 'string' OR octet_length(p->>'anchor_id') NOT BETWEEN 1 AND 512 THEN
+   RAISE EXCEPTION 'invalid edit identity or capacity' USING ERRCODE='22023';
+  END IF;
+  IF octet_length(p_chat) NOT BETWEEN 1 AND 512 OR octet_length(sid) NOT BETWEEN 1 AND 512 THEN RAISE EXCEPTION 'edit scope identifier limit' USING ERRCODE='22023'; END IF;
+  expected := (p->>'expected_epoch')::bigint;
+  material:=p->'edit_material'; capture:=material->'capture'; admission:=capture->'admission'->'payload';
+  envelope:=admission->'admission_envelope'; execution:=admission->'execution_snapshot'; witness:=material->'history_witness';
+  -- Caps precede traversal, hash work, history reads and all destructive work.
+  IF jsonb_typeof(material) IS DISTINCT FROM 'object' OR octet_length(material::text)>8388608
+    OR jsonb_typeof(witness) IS DISTINCT FROM 'array' OR octet_length(witness::text)>4194304
+    OR jsonb_typeof(envelope->'messages') IS DISTINCT FROM 'array'
+    OR jsonb_typeof(material->'user_intent_canonical') IS DISTINCT FROM 'string'
+    OR octet_length(material->>'user_intent_canonical')>1048576
+    OR jsonb_typeof(admission->'admission_canonical') IS DISTINCT FROM 'string' OR octet_length(admission->>'admission_canonical')>1048576
+    OR jsonb_typeof(admission->'execution_canonical') IS DISTINCT FROM 'string' OR octet_length(admission->>'execution_canonical')>1048576 THEN
+   RAISE EXCEPTION 'invalid or oversized edit material' USING ERRCODE='22023';
+  END IF;
+  messages:=envelope->'messages';
+  IF jsonb_array_length(witness)>1000 OR jsonb_array_length(messages) NOT BETWEEN 1 AND 1000 THEN
+   RAISE EXCEPTION 'edit message limit' USING ERRCODE='22023'; END IF;
+  intent:=(material->>'user_intent_canonical')::jsonb;
+  FOR shape IN SELECT * FROM (VALUES
+   (material,ARRAY['capture','user_intent_canonical','history_witness']),
+   (capture,ARRAY['deletion','turn','admission']),
+   (capture->'deletion',ARRAY['chatId','effectiveAccount','requestId','expectedEpoch','anchorId']),
+   (capture->'turn',ARRAY['kind']), (capture->'admission',ARRAY['action','payload']),
+   (admission,ARRAY['request_id','expected_epoch','input_hash','admission_envelope','execution_snapshot','admission_canonical','execution_canonical']),
+   (envelope,ARRAY['contractVersion','effectiveAccountId','sessionId','chatId','expectedEpoch','messages','options','executionSnapshot']),
+   (envelope->'executionSnapshot',ARRAY['id','digest']),
+   (execution,ARRAY['contractVersion','id','requestId','effectiveAccountId','chatId','sessionId','content']),
+   (intent,ARRAY['anchor_id','edited_user_message','requested_options'])
+  ) AS shapes(value,keys) LOOP
+   IF jsonb_typeof(shape.value) IS DISTINCT FROM 'object' OR NOT (shape.value ?& shape.keys) OR shape.value-shape.keys<>'{}'::jsonb THEN
+    RAISE EXCEPTION 'invalid edit object shape' USING ERRCODE='22023'; END IF;
+  END LOOP;
+  -- Depth includes the complete stored material; parse intent separately because it is text.
+  FOR node IN WITH RECURSIVE walk(value,depth) AS (
+   SELECT value,0 FROM (VALUES (material),(intent)) roots(value) UNION ALL
+   SELECT child.value,w.depth+1 FROM walk w CROSS JOIN LATERAL (
+    SELECT value FROM jsonb_each(CASE WHEN jsonb_typeof(w.value)='object' THEN w.value ELSE '{}'::jsonb END)
+    UNION ALL SELECT value FROM jsonb_array_elements(CASE WHEN jsonb_typeof(w.value)='array' THEN w.value ELSE '[]'::jsonb END)
+   ) child WHERE w.depth<=100
+  ) SELECT * FROM walk LOOP
+   IF node.depth>100 OR (jsonb_typeof(node.value)='object' AND node.value ? '__proto__') THEN
+    RAISE EXCEPTION 'unsupported edit JSON' USING ERRCODE='22023'; END IF;
+   IF jsonb_typeof(node.value)='number' AND (node.value::text)::numeric=trunc((node.value::text)::numeric)
+     AND abs((node.value::text)::numeric)>9007199254740991 THEN
+    RAISE EXCEPTION 'unsafe edit integer' USING ERRCODE='22023'; END IF;
+  END LOOP;
+  IF capture->'turn'->>'kind' IS DISTINCT FROM 'new' OR capture->'admission'->>'action' IS DISTINCT FROM 'admit'
+    OR capture->'deletion'->'chatId' IS DISTINCT FROM to_jsonb(p_chat)
+    OR capture->'deletion'->'effectiveAccount' IS DISTINCT FROM to_jsonb(p_account::text)
+    OR capture->'deletion'->'requestId' IS DISTINCT FROM to_jsonb(request::text)
+    OR capture->'deletion'->'expectedEpoch' IS DISTINCT FROM to_jsonb(expected)
+    OR capture->'deletion'->'anchorId' IS DISTINCT FROM p->'anchor_id'
+    OR admission->'expected_epoch' IS DISTINCT FROM to_jsonb(expected+1)
+    OR jsonb_typeof(admission->'request_id') IS DISTINCT FROM 'string'
+    OR (admission->>'request_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+   RAISE EXCEPTION 'edit capture binding mismatch' USING ERRCODE='22023'; END IF;
+  admission_request:=(admission->>'request_id')::uuid;
+  IF admission_request=request OR jsonb_typeof(admission->'input_hash') IS DISTINCT FROM 'string'
+    OR jsonb_typeof(envelope->'executionSnapshot'->'digest') IS DISTINCT FROM 'string'
+    OR (admission->>'admission_canonical')::jsonb IS DISTINCT FROM envelope
+    OR (admission->>'execution_canonical')::jsonb IS DISTINCT FROM execution
+    OR encode(sha256(convert_to(admission->>'admission_canonical','UTF8')),'hex') IS DISTINCT FROM admission->>'input_hash'
+    OR encode(sha256(convert_to(admission->>'execution_canonical','UTF8')),'hex') IS DISTINCT FROM envelope->'executionSnapshot'->>'digest'
+    OR envelope->>'contractVersion' IS DISTINCT FROM 'chat-admission/v1'
+    OR envelope->'effectiveAccountId' IS DISTINCT FROM to_jsonb(p_account::text) OR envelope->'chatId' IS DISTINCT FROM to_jsonb(p_chat)
+    OR envelope->'sessionId' IS DISTINCT FROM to_jsonb(sid) OR envelope->'expectedEpoch' IS DISTINCT FROM to_jsonb(expected+1)
+    OR execution->>'contractVersion' IS DISTINCT FROM 'chat-execution/v1'
+    OR execution->'effectiveAccountId' IS DISTINCT FROM to_jsonb(p_account::text) OR execution->'chatId' IS DISTINCT FROM to_jsonb(p_chat)
+    OR execution->'sessionId' IS DISTINCT FROM to_jsonb(sid) OR execution->'requestId' IS DISTINCT FROM to_jsonb(admission_request::text)
+    OR jsonb_typeof(execution->'id') IS DISTINCT FROM 'string' OR octet_length(execution->>'id') NOT BETWEEN 1 AND 512
+    OR execution->'id' IS DISTINCT FROM envelope->'executionSnapshot'->'id'
+    OR jsonb_typeof(execution->'content') IS DISTINCT FROM 'object'
+    OR jsonb_typeof(envelope->'options') IS DISTINCT FROM 'object'
+    OR envelope->'options' IS DISTINCT FROM execution->'content'->'options' THEN
+   RAISE EXCEPTION 'edit snapshot binding mismatch' USING ERRCODE='22023'; END IF;
+  IF jsonb_typeof(intent->'requested_options') IS DISTINCT FROM 'object'
+    OR (intent->'requested_options')-ARRAY['modelId','artistId','interactive','devSurface']<>'{}'::jsonb
+    OR intent->'anchor_id' IS DISTINCT FROM p->'anchor_id'
+    OR intent->'edited_user_message'->'id' IS DISTINCT FROM p->'anchor_id'
+    OR intent->'edited_user_message'->>'role' IS DISTINCT FROM 'user' THEN
+   RAISE EXCEPTION 'invalid normalized edit intent' USING ERRCODE='22023'; END IF;
+  FOR shape IN SELECT * FROM jsonb_each(intent->'requested_options') LOOP
+   IF shape.value IS DISTINCT FROM envelope->'options'->shape.key THEN
+    RAISE EXCEPTION 'requested option mismatch' USING ERRCODE='22023'; END IF;
+  END LOOP;
+  replacement:=messages->(jsonb_array_length(messages)-1); replacement_id:=replacement->>'id';
+  IF replacement->>'role' IS DISTINCT FROM 'user' OR (replacement-'id') IS DISTINCT FROM ((intent->'edited_user_message')-'id') THEN
+   RAISE EXCEPTION 'edited replacement mismatch' USING ERRCODE='22023'; END IF;
+  parts_count:=0; anchor_count:=0; prefix_messages:='[]'::jsonb;
+  FOR item IN SELECT value FROM jsonb_array_elements(witness) LOOP
+   IF jsonb_typeof(item) IS DISTINCT FROM 'object' OR NOT (item ?& ARRAY['id','role','message']) OR item-ARRAY['id','role','message']<>'{}'::jsonb
+     OR item->'id' IS DISTINCT FROM item->'message'->'id' OR item->'role' IS DISTINCT FROM item->'message'->'role' THEN
+    RAISE EXCEPTION 'invalid history witness' USING ERRCODE='22023'; END IF;
+   IF item->>'id'=p->>'anchor_id' THEN
+    anchor_count:=anchor_count+1;
+    IF item->>'role'<>'user' THEN RAISE EXCEPTION 'edit anchor must be user' USING ERRCODE='22023'; END IF;
+   END IF;
+   IF anchor_count=0 THEN prefix_messages:=prefix_messages||jsonb_build_array(item->'message'); END IF;
+  END LOOP;
+  -- Validate full envelopes and parts before summing them. Prefix is counted only once.
+  FOR item IN SELECT value->'message' FROM jsonb_array_elements(witness) UNION ALL SELECT replacement LOOP
+   IF jsonb_typeof(item) IS DISTINCT FROM 'object' OR NOT (item ?& ARRAY['id','role','parts']) OR item-ARRAY['id','role','parts','metadata']<>'{}'::jsonb
+     OR jsonb_typeof(item->'id') IS DISTINCT FROM 'string' OR octet_length(item->>'id') NOT BETWEEN 1 AND 512
+     OR coalesce(item->>'role','') NOT IN ('user','assistant') OR jsonb_typeof(item->'parts') IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'invalid full UIMessage' USING ERRCODE='22023'; END IF;
+   parts_count:=parts_count+jsonb_array_length(item->'parts');
+   IF parts_count>10000 THEN RAISE EXCEPTION 'edit parts limit' USING ERRCODE='22023'; END IF;
+   FOR part IN SELECT value FROM jsonb_array_elements(item->'parts') LOOP
+    IF jsonb_typeof(part) IS DISTINCT FROM 'object' OR jsonb_typeof(part->'type') IS DISTINCT FROM 'string' OR coalesce(part->>'type','')='' THEN
+     RAISE EXCEPTION 'invalid UIMessage part' USING ERRCODE='22023'; END IF;
+   END LOOP;
+  END LOOP;
+  IF anchor_count<>1 OR (SELECT count(DISTINCT value->>'id') FROM jsonb_array_elements(witness))<>jsonb_array_length(witness) THEN
+   RAISE EXCEPTION 'witness needs one unique user anchor' USING ERRCODE='22023'; END IF;
+  IF messages IS DISTINCT FROM prefix_messages||jsonb_build_array(replacement) THEN
+   RAISE EXCEPTION 'edited history prefix mismatch' USING ERRCODE='22023'; END IF;
+  SELECT * INTO d FROM chat_fence.deletions WHERE chat_id=p_chat AND request_id=request;
+  IF FOUND THEN
+   IF d.edit_material IS NULL OR d.anchor_id IS DISTINCT FROM p->>'anchor_id' OR d.expected_epoch<>expected OR d.edit_material IS DISTINCT FROM material THEN
+    RAISE EXCEPTION 'edit retry input conflict' USING ERRCODE='22023'; END IF;
+   RETURN d.receipt;
+  END IF;
+  IF s.phase<>'idle' OR s.epoch<>expected OR EXISTS(SELECT 1 FROM public.chats WHERE id=p_chat AND active_stream_id IS NOT NULL) THEN
+   RAISE EXCEPTION 'edit delete conflict' USING ERRCODE='40001'; END IF;
+  -- Bound row count AND projected bytes before allocating a history JSON array.
+  SELECT count(*),coalesce(sum(octet_length(jsonb_build_object('id',h.id,'role',h.role,'message',h.parts)::text)+2),0)
+   INTO n,history_bytes FROM (SELECT id,role,parts FROM public.chat_messages WHERE chat_id=p_chat ORDER BY created_at,id LIMIT 1001) h;
+  IF n>1000 OR history_bytes>4194304 THEN RAISE EXCEPTION 'stored history exceeds edit limit' USING ERRCODE='22023'; END IF;
+  SELECT count(*),coalesce(jsonb_agg(jsonb_build_object('id',h.id,'role',h.role,'message',h.parts) ORDER BY h.created_at,h.id),'[]'::jsonb)
+   INTO n,actual_history FROM (SELECT id,role,parts,created_at FROM public.chat_messages WHERE chat_id=p_chat ORDER BY created_at,id LIMIT 1001) h;
+  SELECT * INTO a FROM public.chat_messages WHERE chat_id=p_chat AND id=p->>'anchor_id';
+  IF NOT FOUND THEN RAISE EXCEPTION 'anchor missing' USING ERRCODE='P0002'; END IF;
+  IF actual_history IS DISTINCT FROM witness THEN RAISE EXCEPTION 'edit history changed' USING ERRCODE='40001'; END IF;
+  IF EXISTS(SELECT 1 FROM public.chat_messages WHERE id=replacement_id)
+    OR EXISTS(SELECT 1 FROM chat_fence.tombstones WHERE message_id=replacement_id)
+    OR EXISTS(SELECT 1 FROM chat_fence.turns WHERE chat_id=p_chat AND request_id=admission_request) THEN
+   RAISE EXCEPTION 'edited identity unavailable' USING ERRCODE='40001'; END IF;
+  UPDATE chat_fence.state SET epoch=epoch+1 WHERE chat_id=p_chat RETURNING * INTO s;
+  INSERT INTO chat_fence.tombstones(message_id,chat_id,deleted_epoch)
+   SELECT id,chat_id,s.epoch FROM public.chat_messages WHERE chat_id=p_chat AND (created_at,id)>=(a.created_at,a.id);
+  DELETE FROM public.chat_messages WHERE chat_id=p_chat AND (created_at,id)>=(a.created_at,a.id);
+  GET DIAGNOSTICS n=ROW_COUNT;
+  receipt:=jsonb_build_object('epoch',s.epoch,'deleted',n,'request_id',request);
+  INSERT INTO chat_fence.deletions(chat_id,request_id,anchor_id,expected_epoch,receipt,edit_material) VALUES(p_chat,request,a.id,expected,receipt,material);
+  RETURN receipt;
  END IF;
  IF p_action IN ('admit','delete') THEN
   request := (p->>'request_id')::uuid; expected := (p->>'expected_epoch')::bigint;
@@ -231,7 +401,7 @@ BEGIN
  IF p_action='delete' THEN
   SELECT * INTO d FROM chat_fence.deletions WHERE chat_id=p_chat AND request_id=request;
   IF FOUND THEN
-   IF d.anchor_id IS DISTINCT FROM p->>'anchor_id' OR d.expected_epoch<>expected THEN RAISE EXCEPTION 'retry input conflict' USING ERRCODE='22023'; END IF;
+   IF d.edit_material IS NOT NULL OR d.anchor_id IS DISTINCT FROM p->>'anchor_id' OR d.expected_epoch<>expected THEN RAISE EXCEPTION 'retry input conflict' USING ERRCODE='22023'; END IF;
    RETURN d.receipt;
   END IF;
   IF s.phase<>'idle' OR s.epoch<>expected OR EXISTS(SELECT 1 FROM public.chats WHERE id=p_chat AND active_stream_id IS NOT NULL) THEN
@@ -245,7 +415,7 @@ BEGIN
   DELETE FROM public.chat_messages WHERE chat_id=p_chat AND (created_at,id)>=(a.created_at,a.id);
   GET DIAGNOSTICS n=ROW_COUNT;
   receipt := jsonb_build_object('epoch',s.epoch,'deleted',n,'request_id',request);
-  INSERT INTO chat_fence.deletions VALUES(p_chat,request,a.id,expected,receipt);
+  INSERT INTO chat_fence.deletions(chat_id,request_id,anchor_id,expected_epoch,receipt) VALUES(p_chat,request,a.id,expected,receipt);
   RETURN receipt;
  END IF;
  token := (p->>'owner')::uuid; generation := (p->>'epoch')::bigint;

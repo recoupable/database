@@ -116,3 +116,113 @@ A committed claim and close cannot both win. If close wins, later claim returns 
 Compatibility delta from61d8: admit/claim/bind/write and snapshot/receipt shapes are unchanged. The new command/result must be added to the disabled typed API union. Pending `release(reason:confirmed_no_start)` now requires a non-null attempt and is reserved for separately obtained external no-start evidence. SQL still trusts that service assertion; it cannot verify the provider proof. It must never be used by Stop based on a prior never_attempted read, timeout, lookup failure or null bound run. Never-attempted callers must use close_unattempted. Running release semantics remain unchanged. No existing published Stop endpoint is changed by this SQL proposal.
 
 Real two-connection disposable tests hold the first transaction after claim or close, verify the second caller actually waits on the shared lock, commit, and assert only the winning operation transitions. Additional tests cover retry, rollback, stale/closed/new owner, bound run, missing identity and account/browser denial. Root/UI must accept this exact atomic contract before their disabled Stop/resume adapter implementation. UI owns those adapters; this proposal adds none and performs no cancellation/provider operations.
+
+## Atomic edited-intent extension — offline only
+
+This extends the accepted `7914f063729db04960149647d9ee19c8f857c417` proposal.
+The path's `636` is a historical closed-issue identifier, not an open ticket.
+Current ownership remains with the existing Intelligent UI / Context work; this
+change creates or reopens no backlog. No production migration, enrollment, public
+route, credential facility or provider operation is included.
+
+`chat_fence.deletions.edit_material` is nullable JSONB. Delete-only rows remain
+NULL; edited deletion records contain exactly `{capture,user_intent_canonical,
+history_witness}`. Capture is the entire API `captureFencedEditedTurn(...).read()`
+value at `4336582b848c5d7808597f5a3890f55013d13b1f`, including deletion intent,
+`turn:{kind:"new"}`, and the existing admit command with full normalized objects,
+exact canonical strings and hash. This does not allocate an assistant ID: that
+remains the existing workflow's new-turn responsibility.
+
+`user_intent_canonical` is strict canonical JSON text of
+`{anchor_id,edited_user_message,requested_options}`. Edited user message retains
+the original anchor ID. Requested options contain only explicitly supplied
+supported options, without re-resolving omitted defaults. The trusted API owns
+strict schema validation, canonical ordering and recovery re-encoding.
+`history_witness` is every original saved message as `{id,role,message}`, ordered
+by database `(created_at,id)`, where message is the full stored UIMessage envelope.
+The server must capture this evidence with the history used for pure preparation;
+it cannot reconstruct the deleted suffix from the prepared capture afterward.
+
+Two actions reuse the existing RPC, ownership check and lock order:
+
+- `delete_edit` has exact payload `{request_id,expected_epoch,anchor_id,edit_material}`.
+  SQL validates all scope/identity/epoch bindings, canonical digests and object
+  equality, intent-to-replacement equality, requested/resolved option consistency,
+  and complete ordered witness equality under the chat lock. It checks current
+  idle/null-slot/epoch, both epoch increments, existing admission key and replacement
+  identity availability before deleting. The same transaction stores tombstones,
+  removes the inclusive suffix, advances epoch and inserts material with the receipt.
+  Result is the unchanged flat `{request_id,epoch,deleted}`. It creates no turn,
+  claim, replacement message, workflow or pending slot.
+- `deletion_snapshot` has exact payload `{request_id}`. It returns the original
+  `{receipt,edit_material}` in the authorized chat, including after newer owners;
+  delete-only material is NULL. Missing rows raise P0002. It never selects the latest
+  operation or changes current state. Full material is service-internal: any later
+  public adapter must project a safe display response.
+
+An exact edited retry compares the entire saved material, including canonical text,
+and returns the original receipt BEFORE current phase/history checks, AFTER current
+authorization. Changed material raises 22023. Legacy delete requests and responses
+remain unchanged on original delete-only records; cross-mode use of the same key
+raises 22023 rather than upgrading/downgrading the original operation.
+
+Two independently generated candidates with equal user intent can still have different
+capture IDs. SQL rejects the loser as changed material. The trusted API may explicitly
+read the original key, compare normalized user intent and return the winner's stored
+projection. It must never replace the winner, silently remint IDs or adopt a new epoch.
+A transport/lookup failure is not evidence of absence.
+
+Continuation is a SEPARATE explicit trusted action. Reauthorize, read the original
+saved record, validate canonical bytes and receipt bindings, then invoke existing
+admit with the exact stored payload. New owners cause the original expected epoch
+to conflict; existing original turns reconcile through admit/admission_snapshot
+without authorizing redispatch. Merely reading or replaying deletion never admits.
+Captured credential policy metadata is not a grant or recoverable credential.
+
+New-edit-only qualification bounds: whole material <=8 MiB (API outbound UTF-8 and
+SQL JSONB serialization measured separately); each admission/execution canonical
+string and normalized intent <=1 MiB; witness <=4 MiB; <=1,000 original and admission
+messages; <=10,000 total original-plus-replacement UI parts; IDs <=512 UTF-8 bytes;
+complete material and parsed canonical content <=100 JSON nesting levels. The locked
+history scan is capped at 1,001 rows and checks serialized size before aggregation.
+These are accepted OFFLINE qualification constraints, not approved public-product
+limits. Reject rather than truncate; legacy admit/delete acquire no new caps.
+
+SQL hashes supplied UTF-8 canonical text and compares parsed objects. It does not
+prove ECMAScript canonical spelling or replace the strict API encoder. The producer
+and recovered consumer must reject NUL, lone surrogates, unsafe numbers, unsupported
+keys/non-JSON values and noncanonical text. SQL scope/digest checks are not a secret
+scanner; never pass raw workflow credentials or agentContext into saved material.
+
+### Local qualification and reproduction
+
+`test_atomic_edit.py` uses the disposable PostgreSQL harness alongside unchanged
+`test_protocol.py`. Run each on both PostgreSQL 15 and 17:
+
+```sh
+PG_BIN=/opt/homebrew/opt/postgresql@15/bin python3 proposals/chat-writer-fencing-636/test_protocol.py
+PG_BIN=/opt/homebrew/opt/postgresql@15/bin python3 proposals/chat-writer-fencing-636/test_atomic_edit.py
+PG_BIN=/opt/homebrew/opt/postgresql@17/bin python3 proposals/chat-writer-fencing-636/test_protocol.py
+PG_BIN=/opt/homebrew/opt/postgresql@17/bin python3 proposals/chat-writer-fencing-636/test_atomic_edit.py
+```
+
+`atomic-edit-vector.json` is generated by the actual pinned API pure capture using
+its synthetic edit fixture, sessionId=`chat`, deletion.expectedEpoch=0, plus original
+history and canonical normalized intent. `generate_atomic_edit_vector.py` reproduces
+it from a local API Git repository and installed esbuild/Zod dependencies; it never
+fetches sources or calls a provider. Reproduce without changing the committed fixture first:
+
+```sh
+python3 proposals/chat-writer-fencing-636/generate_atomic_edit_vector.py /path/to/api /path/to/api/node_modules/.bin/esbuild --output /tmp/atomic-edit-vector.json
+cmp /tmp/atomic-edit-vector.json proposals/chat-writer-fencing-636/atomic-edit-vector.json
+```
+
+Other Python fixtures deliberately exercise
+SQL bindings and are not claims that Python implements the JavaScript canonicalizer.
+The pinned JavaScript fixture demonstrates its actual canonical bytes round-trip.
+
+Evidence covers failure after deletion/before receipt insertion, rollback, committed
+response loss/readback, explicit continuation, exact/change-key retries, lock races,
+scopes/permissions, caps and existing protocol regressions. These are disposable
+fixture claims, not full historical migrations, authenticated HTTP, browser reload,
+provider execution or production apply. Root owns review and any later apply decision.
