@@ -1,0 +1,52 @@
+name: Catalog disabled storage (offline only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'proposals/catalog-weekly-storage-1867/**'
+      - '.github/workflows/catalog-disabled-storage.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'proposals/catalog-weekly-storage-1867/**'
+      - '.github/workflows/catalog-disabled-storage.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  disabled-storage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 17]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The unchanged fixture reads dependency migrations by immutable Git SHA.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-${{ matrix.postgres }}
+      - name: Test disabled storage in a disposable socket-only cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_bin="/usr/lib/postgresql/${{ matrix.postgres }}/bin"
+          "$pg_bin/psql" --version | grep -E '^psql \(PostgreSQL\) ${{ matrix.postgres }}\.'
+          git cat-file -e 76bad6195b4bd1918284c5ebe49c91f408072ed2^{commit}
+          isolated_home="$(mktemp -d /tmp/catalog-ci-home.XXXXXX)"
+          trap 'rm -rf -- "$isolated_home"' EXIT
+          # No inherited libpq service, host, address, options, credentials or Python hooks.
+          # The fixture starts with listen_addresses='' and supplies -h/-p/-d to psql.
+          env -i PATH=/usr/bin:/bin HOME="$isolated_home" TMPDIR=/tmp \
+            PG_BINDIR="$pg_bin" \
+            python3 proposals/catalog-weekly-storage-1867/test_disabled_storage.py

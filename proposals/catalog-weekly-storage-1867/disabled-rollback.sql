@@ -1,0 +1,35 @@
+-- Disposable-test teardown ONLY. Production removal requires retention approval.
+-- No CASCADE, no deletion of existing account/catalog rows or legacy objects.
+BEGIN;
+DROP FUNCTION public.read_catalog_report_schedule(uuid,jsonb,uuid);
+DROP FUNCTION public.mutate_catalog_report_schedule(uuid,jsonb,uuid,jsonb);
+DROP FUNCTION public.catalog_report_match_principal(public.catalog_report_schedules,uuid,jsonb);
+DROP FUNCTION public.catalog_report_response(uuid,integer,boolean);
+DROP FUNCTION public.catalog_report_authorize(uuid,uuid,uuid);
+DROP FUNCTION public.catalog_report_validate_schedule(jsonb,jsonb);
+DROP FUNCTION public.catalog_report_validate_principal(jsonb);
+DROP FUNCTION public.catalog_report_uuid(jsonb);
+DROP FUNCTION public.catalog_report_keys(jsonb,text[]);
+ALTER TABLE public.catalog_report_schedules DROP CONSTRAINT catalog_report_current_revision;
+DROP TABLE public.catalog_report_mutation_receipts;
+DROP TABLE public.catalog_report_schedule_revisions;
+DROP TABLE public.catalog_report_schedules;
+DROP FUNCTION public.catalog_report_immutable_guard();
+DROP POLICY catalog_report_owner_read ON public.accounts;
+DROP POLICY catalog_report_owner_lock ON public.accounts;
+DROP POLICY catalog_report_owner_no_write ON public.accounts;
+DROP POLICY catalog_report_owner_read ON public.catalogs;
+DROP POLICY catalog_report_owner_lock ON public.catalogs;
+DROP POLICY catalog_report_owner_no_write ON public.catalogs;
+DROP POLICY catalog_report_owner_read ON public.account_organization_ids;
+DROP POLICY catalog_report_owner_lock ON public.account_organization_ids;
+DROP POLICY catalog_report_owner_no_write ON public.account_organization_ids;
+DROP POLICY catalog_report_owner_read ON public.account_catalogs;
+DROP POLICY catalog_report_owner_lock ON public.account_catalogs;
+DROP POLICY catalog_report_owner_no_write ON public.account_catalogs;
+REVOKE SELECT,UPDATE(id) ON public.accounts,public.catalogs FROM catalog_report_owner;
+REVOKE SELECT,UPDATE(account_id) ON public.account_organization_ids FROM catalog_report_owner;
+REVOKE SELECT,UPDATE(account) ON public.account_catalogs FROM catalog_report_owner;
+REVOKE USAGE ON SCHEMA public FROM catalog_report_owner;
+DROP ROLE catalog_report_owner;
+COMMIT;
