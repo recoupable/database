@@ -1,0 +1,244 @@
+{
+  "sourceOnly": true,
+  "apiTree": "462a405ae253de3bac04b7e475dc24a8044b1334",
+  "sources": [
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20250616142215_scheduled_actions_table.sql",
+      "sha256": "ba696bd695bd3db0fd8031aad2a8c6d54e0e33c2210bb6fc7c0ebd8438d45de3",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20250616142215_scheduled_actions_table.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20260826170000_drop_legacy_next_last_run_from_scheduled_actions.sql",
+      "sha256": "e986369ed8d534a87404a431e8b31f40e8178764a70bf7eeaa5e836ea5bdbd55",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20260826170000_drop_legacy_next_last_run_from_scheduled_actions.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20261009193000_catalog_daily_stream_tracking.sql",
+      "sha256": "41a4af43a3d0b83d848dd6a0a39b5f89230172c08c45356eac7b77ee40ed0ca5",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20261009193000_catalog_daily_stream_tracking.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20261010040000_catalog_stream_parent_lock_order.sql",
+      "sha256": "e657e2c24ca13b7b4557c889bd3d0a34c6da9362c972ff92cf781e41e12c87a4",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20261010040000_catalog_stream_parent_lock_order.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20261022120000_context_catalog_cases.sql",
+      "sha256": "ca8bb67bb133e114757419dd08c98d86de98b051363aa9bbd80e468b73964b06",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20261022120000_context_catalog_cases.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20260926170000_context_brief_snapshots.sql",
+      "sha256": "beebbb39b7a76d98e71b93c33092f4388aba449e03bae4ae0ecc3b5c280e56d4",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20260926170000_context_brief_snapshots.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20261006130000_oauth_account_identities.sql",
+      "sha256": "8e751bd5a95e5745ab80e302ca80973da262a54f09a6c95ec39b30db24a5efb8",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20261006130000_oauth_account_identities.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20260501000001_open_agents_workflow_runs.sql",
+      "sha256": "db3bcc3885eb9cc2ea33ce3e97a3a7d708a1e6ac2044365bacda3474c40af322",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20260501000001_open_agents_workflow_runs.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20261015230000_create_scheduled_posts.sql",
+      "sha256": "ec580f881836b103abb73110e73fc58a539579403d1c469767248cbd2fa0d9bb",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20261015230000_create_scheduled_posts.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20260901000000_create_project_tables.sql",
+      "sha256": "2d95e8612835d9dfaabfc01e216ef7e5407a46be865bb5b42adaa542ad26d2f4",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20260901000000_create_project_tables.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20251005214926_create_account_catalogs_table.sql",
+      "sha256": "0607dec63bdbd1f0c8465db52a569fbbc130d7fbee4140624d9d127bbb9f78ac",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20251005214926_create_account_catalogs_table.sql"
+    },
+    {
+      "repository": "database",
+      "commit": "76bad6195b4bd1918284c5ebe49c91f408072ed2",
+      "path": "supabase/migrations/20261008160000_context_release_cases.sql",
+      "sha256": "095692a2d01d079993114a8b9c2acd0433ccc31efe9b8280ab18908631ac1884",
+      "url": "https://github.com/recoupable/database/blob/76bad6195b4bd1918284c5ebe49c91f408072ed2/supabase/migrations/20261008160000_context_release_cases.sql"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "types/database.types.ts",
+      "sha256": "e60efad72a9046b3978c32f94ea36938dad0ff500d64a763b00d8b6e210a8dd0",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/types/database.types.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/auth/VerificationEvidence.ts",
+      "sha256": "51c089a2459f50d2ac2e23955de6a3cbdb1ec9033fd1ba6ae3b0b71f36588eb1",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/auth/VerificationEvidence.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/auth/validateAuthContext.ts",
+      "sha256": "055ac2965db8487c8f67d74c549101d866968ed507d295498ed4485d62867c28",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/auth/validateAuthContext.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/auth/getAccountIdByApiKey.ts",
+      "sha256": "5512a0c0ad1f293d2d226e9cb162b68fdb11706a0407bf95dbdcea54f29ee503",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/auth/getAccountIdByApiKey.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/auth/validateAccountIdOverride.ts",
+      "sha256": "1e6c31d058980243ac173b7d443dcfa5f9cd923bafaf03ea87df3f09b644c9c7",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/auth/validateAccountIdOverride.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/privy/getExistingAccountIdByAuthToken.ts",
+      "sha256": "07380f7bf5912cced7160bb8e9ffa44b6d3d61492c8680b53071c8095944300c",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/privy/getExistingAccountIdByAuthToken.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/privy/getEmailByAuthToken.ts",
+      "sha256": "6bbb236b0b5439a744843636ff4a3852dac8d1b8a5e68838babff2095522a930",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/privy/getEmailByAuthToken.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/privy/getVerifiedOAuthIdentity.ts",
+      "sha256": "9f921750f60f58dae2cea0c7c9c7f4b326f8c5065ef79b06f65830da5aff2829",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/privy/getVerifiedOAuthIdentity.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/supabase/oauth_account_identities/getOAuthAccountIdentity.ts",
+      "sha256": "3a6c91a69a5e97ad40b028a1e7143b005a79b0f8abd571a4c1df3b1c3d6a912d",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/supabase/oauth_account_identities/getOAuthAccountIdentity.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/supabase/account_api_keys/selectAccountApiKeys.ts",
+      "sha256": "15cdb7707225c05c90a49d5ac06acd66a751020b29d5de10a943cb6944f2921e",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/supabase/account_api_keys/selectAccountApiKeys.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/organizations/canAccessAccount.ts",
+      "sha256": "546bf1b80e028e0d6d9a85e16465a359e7a88283bc47d2fcf34f8abb57b3d4b3",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/organizations/canAccessAccount.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/organizations/validateOrganizationAccess.ts",
+      "sha256": "731d90710a5584e7d1dcacbb3213e20d282f550fff4e72ee2043d399f4726d97",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/organizations/validateOrganizationAccess.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/supabase/account_catalogs/selectAccountCatalogs.ts",
+      "sha256": "55a89cb61b49524349edfe993e510526bbb3d8011539a4d17348ca5fd5915b62",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/supabase/account_catalogs/selectAccountCatalogs.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/songs/authorizeCatalogAccess.ts",
+      "sha256": "fdb695048b8d9726c96279b254278050a4b1503dd9d0d6e8d5197fd94cfe079d",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/songs/authorizeCatalogAccess.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/tasks/createTaskSchemas.ts",
+      "sha256": "a762e28667d5dfa375ae71c0b94dee1fce6060561aa60acb46b207c0ae05c220",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/tasks/createTaskSchemas.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/tasks/updateTaskSchemas.ts",
+      "sha256": "c08d2f9802350a8acf993c76c660349902e753f52396f8399426edd86b161202",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/tasks/updateTaskSchemas.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/tasks/isValidTaskSchedule.ts",
+      "sha256": "fa85dad68a4694449d20b6734eeab66e3186ecf0dc269e8761eea6ff65dc1813",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/tasks/isValidTaskSchedule.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "lib/tasks/timezone/isValidTimeZone.ts",
+      "sha256": "8db768ff1302df31d96971b56cdc79a0fcce00f2e1634406e2dcc8e079f794ac",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/lib/tasks/timezone/isValidTimeZone.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "app/api/internal/catalog-stream-maintenance/route.ts",
+      "sha256": "cf1cf091d57eb0228f8bb44fecdc2a5656efc67610e7c2c75db75cdae969f4ae",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/app/api/internal/catalog-stream-maintenance/route.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "app/workflows/catalogStreamsMaintenanceWorkflow.ts",
+      "sha256": "5fc342e5964cd98c1f05b87f0b6a0d6676dee5927f01665e1ffe973c1c06b84b",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/app/workflows/catalogStreamsMaintenanceWorkflow.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "app/workflows/dispatchCatalogStreamsStep.ts",
+      "sha256": "817b9b45a3e1c5b6eb652de158f1d2fe9077291564259939f0d75d8200c46a8b",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/app/workflows/dispatchCatalogStreamsStep.ts"
+    },
+    {
+      "repository": "api",
+      "commit": "fd2a46735f572af458d3617f434fcad615d8de3f",
+      "path": "vercel.json",
+      "sha256": "5db474c6b15260e210895089353488b51060d80c6b9655820fcca9e8d7ba0a16",
+      "url": "https://github.com/recoupable/api/blob/fd2a46735f572af458d3617f434fcad615d8de3f/vercel.json"
+    }
+  ]
+}
