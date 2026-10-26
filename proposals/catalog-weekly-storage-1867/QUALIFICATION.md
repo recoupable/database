@@ -1,5 +1,7 @@
 # Qualification, compatibility and rollback plan
 
+> Historical source-only design at afeb9c2; original snapshot/reviews preserved. Current disabled-only implementation and qualification are in [PROTOTYPE.md](PROTOTYPE.md). Its narrower scope and explicit owner-only dependency grants/policies supersede historical statements below that no SQL or dependency grant changes are included. Wider execution lifecycle remains unimplemented.
+
 No tests in this file have been executed as implementation qualification. This is a source-only proposal; only document/source-pin/diff review is appropriate now. Root selects the contract before executable SQL/API implementation. Never apply a proposed migration to hosted/production systems as part of review.
 
 ## Root-selected next boundary

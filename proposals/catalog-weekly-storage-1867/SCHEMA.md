@@ -1,5 +1,7 @@
 # Proposed v1 typed storage and transaction contract
 
+> Historical source-only design at afeb9c2; original snapshot/reviews preserved. Current disabled-only implementation and qualification are in [PROTOTYPE.md](PROTOTYPE.md). Its narrower scope and explicit owner-only dependency grants/policies supersede historical statements below that no SQL or dependency grant changes are included. Wider execution lifecycle remains unimplemented.
+
 Design only. No executable SQL or generated API type change is included. Names below are proposed API/DB contracts, not existing RPCs. SQL implementation must remain outside automatic migrations until separately selected and approved.
 
 ## `catalog_report_schedules`

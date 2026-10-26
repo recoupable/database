@@ -1,5 +1,7 @@
 # Catalog weekly report storage — decision proposal, not implementation
 
+> Historical source-only design at afeb9c2; original snapshot/reviews preserved. Current disabled-only implementation and qualification are in [PROTOTYPE.md](PROTOTYPE.md). Its narrower scope and explicit owner-only dependency grants/policies supersede historical statements below that no SQL or dependency grant changes are included. Wider execution lifecycle remains unimplemented.
+
 2026-10-25. Existing scope: catalog weekly report setup (#1867/#1803). Root selects the final reviewed contract before implementation. This directory is outside automatic migrations and contains no executable migration, runtime code, generated production types, credentials or customer data. No schema was applied, scheduler enabled, provider called or report sent. Sources are pinned in [sources.json](sources.json): Database main `76bad6195b4bd1918284c5ebe49c91f408072ed2`, API main `fd2a46735f572af458d3617f434fcad615d8de3f` (tree `462a405ae253de3bac04b7e475dc24a8044b1334`). Source presence is not proof of deployed schema or permission.
 
 ## Recommendation and decision
