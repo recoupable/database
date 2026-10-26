@@ -32,3 +32,4 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_release_cases.py'
           python3 -m unittest discover -s tests -p 'test_company_assessment.py'
           python3 -m unittest discover -s tests -p 'test_catalog_cases.py'
+          python3 -m unittest discover -s tests -p 'test_release_format.py'
