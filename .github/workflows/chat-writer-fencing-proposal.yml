@@ -1,0 +1,50 @@
+name: Chat writer fencing proposal (offline only)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'proposals/chat-writer-fencing-636/**'
+      - '.github/workflows/chat-writer-fencing-proposal.yml'
+permissions:
+  contents: read
+jobs:
+  disposable-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 17]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-${{ matrix.postgres }}
+      - name: Exercise proposal against synthetic disposable database
+        env:
+          PG_BIN: /usr/lib/postgresql/${{ matrix.postgres }}/bin
+        run: python3 proposals/chat-writer-fencing-636/test_protocol.py
+  atomic-edit-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 17]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-${{ matrix.postgres }}
+      - name: Exercise atomic edits against synthetic disposable database
+        env:
+          PG_BIN: /usr/lib/postgresql/${{ matrix.postgres }}/bin
+        run: python3 proposals/chat-writer-fencing-636/test_atomic_edit.py
