@@ -12,15 +12,23 @@ GRANT UPDATE(account) ON public.account_catalogs TO catalog_report_owner;
 CREATE POLICY catalog_report_owner_read ON public.accounts FOR SELECT TO catalog_report_owner USING (true);
 -- Row-lock scans also consult UPDATE USING; WITH CHECK false prohibits writes.
 CREATE POLICY catalog_report_owner_lock ON public.accounts FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
+-- Restrictive check remains false even if another permissive policy allows updates.
+CREATE POLICY catalog_report_owner_no_write ON public.accounts AS RESTRICTIVE FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
 CREATE POLICY catalog_report_owner_read ON public.catalogs FOR SELECT TO catalog_report_owner USING (true);
 -- Row-lock scans also consult UPDATE USING; WITH CHECK false prohibits writes.
 CREATE POLICY catalog_report_owner_lock ON public.catalogs FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
+-- Restrictive check remains false even if another permissive policy allows updates.
+CREATE POLICY catalog_report_owner_no_write ON public.catalogs AS RESTRICTIVE FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
 CREATE POLICY catalog_report_owner_read ON public.account_organization_ids FOR SELECT TO catalog_report_owner USING (true);
 -- Row-lock scans also consult UPDATE USING; WITH CHECK false prohibits writes.
 CREATE POLICY catalog_report_owner_lock ON public.account_organization_ids FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
+-- Restrictive check remains false even if another permissive policy allows updates.
+CREATE POLICY catalog_report_owner_no_write ON public.account_organization_ids AS RESTRICTIVE FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
 CREATE POLICY catalog_report_owner_read ON public.account_catalogs FOR SELECT TO catalog_report_owner USING (true);
 -- Row-lock scans also consult UPDATE USING; WITH CHECK false prohibits writes.
 CREATE POLICY catalog_report_owner_lock ON public.account_catalogs FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
+-- Restrictive check remains false even if another permissive policy allows updates.
+CREATE POLICY catalog_report_owner_no_write ON public.account_catalogs AS RESTRICTIVE FOR UPDATE TO catalog_report_owner USING (true) WITH CHECK (false);
 
 CREATE TABLE public.catalog_report_schedules (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

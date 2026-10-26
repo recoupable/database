@@ -209,6 +209,20 @@ class DisabledStorage(unittest.TestCase):
                     for stream in [proc.stdin,proc.stdout,proc.stderr]:
                         if stream and not stream.closed:stream.close()
 
+    def test_permissive_policy_cannot_reenable_dependency_owner_writes(self):
+        self.sql('CREATE POLICY synthetic_permissive ON accounts FOR UPDATE TO PUBLIC USING(true) WITH CHECK(true)')
+        try:
+            self.sql(f"SET ROLE catalog_report_owner; UPDATE accounts SET id=id WHERE id='{self.actor}'",'42501')
+        finally:
+            self.sql('DROP POLICY synthetic_permissive ON accounts')
+
+    def test_archive_requires_disabled_state_not_prior_disable_command(self):
+        r=self.call(self.intent)
+        archived=self.call(self.mutate('archive',r['id'],1))
+        self.assertEqual(archived['revision'],2)
+        self.assertFalse(archived['enabled'])
+        self.assertEqual(self.sql(f"SELECT string_agg(operation,',' ORDER BY revision) FROM catalog_report_schedule_revisions WHERE schedule_id='{r['id']}'"),'create,archive')
+
     def test_teardown_is_scoped_and_reinstallation_is_empty(self):
         original = self.sql("SELECT count(*) FROM accounts")
         self.call(self.intent)
