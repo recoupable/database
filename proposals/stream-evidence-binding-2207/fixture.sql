@@ -16,20 +16,27 @@ VALUES ('10000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-00000000
 INSERT INTO catalog_stream_tracking(catalog_id,owner_id,enabled) VALUES ('10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001',true);
 INSERT INTO catalog_stream_runs(id,catalog_id,revision,scheduled_day,since,until)
 SELECT '10000000-0000-4000-8000-000000000007',catalog_id,revision,'2026-10-25','2026-10-24','2026-10-25' FROM catalog_stream_tracking;
-INSERT INTO catalog_stream_observations VALUES ('10000000-0000-4000-8000-000000000007','10000000-0000-4000-8000-000000000002','USAAA2600001','2026-10-24',100,'provider-a','retained-hash','2026-10-25T00:00:00Z');
+INSERT INTO catalog_stream_observations VALUES ('10000000-0000-4000-8000-000000000007','10000000-0000-4000-8000-000000000002','USAAA2600001','2026-10-24',100,'provider-a',repeat('a',64),'2026-10-25T00:00:00Z');
 INSERT INTO context_sources(id,owner_id,source_url,kind)
-VALUES ('10000000-0000-4000-8000-000000000008','10000000-0000-4000-8000-000000000001','urn:recoup:luminate-daily:10000000-0000-4000-8000-000000000002:10000000-0000-4000-8000-000000000005','provider_metadata');
-INSERT INTO context_source_versions(id,owner_id,source_id,fingerprint,content)
-SELECT '10000000-0000-4000-8000-000000000009','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000008',repeat('b',64),jsonb_build_object(
-'schemaVersion',1,'catalogId','10000000-0000-4000-8000-000000000002','subjectId','10000000-0000-4000-8000-000000000005','isrc','USAAA2600001',
-'metric','luminate_all_dsp_worldwide_daily_streams','since','2026-10-24','until','2026-10-25',
-'observations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY date) FROM catalog_stream_observations o));
+VALUES ('10000000-0000-4000-8000-000000000008','10000000-0000-4000-8000-000000000001','urn:recoup:retained-catalog-streams:10000000-0000-4000-8000-000000000002:10000000-0000-4000-8000-000000000005:all_dsps:worldwide','provider_metadata');
+INSERT INTO context_source_versions(id,owner_id,source_id,fingerprint,content,retrieved_at)
+SELECT '10000000-0000-4000-8000-000000000009','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000008',repeat('b',64),
+jsonb_build_object('schemaVersion',1,'workspaceId','10000000-0000-4000-8000-000000000001',
+'catalogId','10000000-0000-4000-8000-000000000002','subjectId','10000000-0000-4000-8000-000000000005',
+'isrc','USAAA2600001','provider','luminate','metric','daily_streams','platform','all_dsps','territory','worldwide','timezone','UTC',
+'since','2026-10-23','until','2026-10-25',
+'periods',jsonb_build_object('previous',jsonb_build_object('start','2026-10-23','end_exclusive','2026-10-24'),
+'current',jsonb_build_object('start','2026-10-24','end_exclusive','2026-10-25'),'days',1,'timezone','UTC'),
+'providerRecordingId','provider-a','observations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY date) FROM catalog_stream_observations o),
+'absentDates',jsonb_build_array('2026-10-23'),'nullDates','[]'::jsonb,
+'retrievalRange',jsonb_build_object('earliest','2026-10-25T00:00:00+00:00','latest','2026-10-25T00:00:00+00:00')),
+'2026-10-25T00:00:00Z';
 INSERT INTO context_attempts(id,owner_id,request_id,module,attempt,status,provider,recipe_version,schema_version)
 VALUES ('10000000-0000-4000-8000-000000000010','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000004','retained-stream-binding',1,'succeeded','luminate','retained-luminate-daily-v1','1');
 INSERT INTO context_results(id,owner_id,attempt_id,subject_id,topic,reuse_key,status,evidence_kind,normalized_response,coverage)
-SELECT '10000000-0000-4000-8000-000000000011','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000010','10000000-0000-4000-8000-000000000005','luminate_daily_streams_v1:10000000-0000-4000-8000-000000000002',repeat('c',64),'accepted','observation',content,'{"scope":"retained_rows_only"}'
+SELECT '10000000-0000-4000-8000-000000000011','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000010','10000000-0000-4000-8000-000000000005','catalog_retained_streams',repeat('c',64),'accepted','observation',content,'{"scope":"retained_rows_only"}'
 FROM context_source_versions;
 INSERT INTO context_result_sources VALUES ('10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000011','10000000-0000-4000-8000-000000000009');
 INSERT INTO context_documents(owner_id,subject_id,topic)
-VALUES ('10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000005','luminate_daily_streams_v1:10000000-0000-4000-8000-000000000002');
+VALUES ('10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000005','catalog_retained_streams');
 SELECT accept_context_result('10000000-0000-4000-8000-000000000001',id,'10000000-0000-4000-8000-000000000011',0) FROM context_documents;

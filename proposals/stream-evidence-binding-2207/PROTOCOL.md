@@ -1,191 +1,179 @@
-# Retained Luminate → Context evidence proposal (#2207)
+# Retained Catalog stream → Context evidence proposal (#2207)
 
-Status: source/design proposal, 2026-10-27. No migration, production writer,
-service grant, provider call, ingestion service or durable adapter is implemented.
-`proposal.sql` is an executable **read/lock qualification**, not an activation
-script. The private proposal schema denies service/browser execution. Catalog
-meaning review and root adoption remain required before runtime implementation.
+Status: source/design qualification, 2026-10-27. Aligned to the Catalog source
+contract adopted by root from API #1187, head
+`b185ea9ded070cd6d621d2bf13843bf9df6e5a8f`, merge
+`08f62b7474e52b2bd0114d2d2c62c642c17ef6bf`.
+[Canonical Catalog contract](https://github.com/recoupable/api/blob/08f62b7474e52b2bd0114d2d2c62c642c17ef6bf/docs/contracts/catalog-stream-evidence-2207/README.md)
+and its 31 synthetic vectors govern source meaning. Earlier versions of this
+proposal's dynamic topic, different locator and 62-date limit are superseded.
 
-## Existing sources and exact scope
+No migration, production writer, service grant, provider call, ingestion service or
+live adapter. `proposal.sql` is a private, default-denied **evidence read/lock proof**.
+Its fixture inserts are not a retention writer. It does not authorize derived sums,
+growth or comparison fields: exact bundle equality is not a result-field validator.
+Root and Catalog review the revised exact heads before any further implementation.
 
-Database base `6ae03a0cc71dc2ad3955594c9cfcb6156c3fb8b8`; API base
-`c1298deb6bb981543bf442d26a32def889e60d71`. The relevant existing migrations are:
+## Existing source authority
 
-- `20260920010000_context_foundation.sql`: sources, versions, attempts, accepted
-  results, current documents, `accept_context_result`, `withdraw_context_source`.
-- `20260920020000_context_spotify_pipeline.sql`: metadata writer and ordinary
-  request document reader. The writer hardcodes Spotify; do not reuse it here.
+Database base `6ae03a0cc71dc2ad3955594c9cfcb6156c3fb8b8`; API inspection base
+`c1298deb6bb981543bf442d26a32def889e60d71`, with adopted Catalog contract above.
+Relevant Database migrations under `supabase/migrations/`:
+
+- `20260920010000_context_foundation.sql`: sources, versions, attempts, results,
+  current documents, `accept_context_result`, `withdraw_context_source`.
+- `20260920020000_context_spotify_pipeline.sql` and current metadata replacement
+  `20260920040000_context_guests.sql`: Spotify-specific writer; do not reuse here.
 - `20260922070000_context_catalog_entry.sql` and
-  `20260923080000_context_execution_records.sql`: owned catalog request, explicit
+  `20260923080000_context_execution_records.sql`: owned catalog requests, explicit
   expansion edges and exact `resolve_context_catalog_member_recording`.
-- `20261008160000_context_release_cases.sql`: current actor/workspace authorization.
+- `20261008160000_context_release_cases.sql`: actor/workspace authorization.
 - `20261009193000_catalog_daily_stream_tracking.sql` and
-  `20261010040000_catalog_stream_parent_lock_order.sql`: retained daily tuple,
-  latest-per-day ordering and current collection lock order.
+  `20261010040000_catalog_stream_parent_lock_order.sql`: retained rows, latest-day
+  ordering and supported collection lock order.
 
-A global recording subject is not source authority. Require an existing expanded
-member of an owned ready request, exact Recoup catalog resource and current
-workspace/catalog/ISRC memberships. Never expand a request, infer a UUID, call a
-provider or create a recording while resolving a selection. Expanded recordings
-are deliberately outside `request.output.subjectIds`.
+A global recording UUID is not evidence authority. Require the exact existing
+expanded member of an owned partial/completed request; current actor/workspace,
+workspace/catalog and catalog/ISRC memberships; exact Recoup catalog resource and
+recording binding. Expanded recordings are outside `request.output.subjectIds`.
+The reader never expands, invents a UUID, collects or creates a recording.
 
-## Minimal evidence representation
+## Adopted series, topic and current-document behavior
 
-Reuse the existing Context tables; add no observation mirror table or identifier
-registry. The suggested source scope is **owner + catalog + recording**, with
-`kind=provider_metadata` and server-generated locator
-`urn:recoup:luminate-daily:<catalog UUID>:<recording subject UUID>`. It is a retained
-evidence locator, not a provider URL or provider identity assertion.
+Use existing Context tables. One owned source per catalog/recording/metric scope:
 
-Use topic `luminate_daily_streams_v1:<catalog UUID>`, attempt provider `luminate`,
-recipe `retained-luminate-daily-v1`, schema `1`, accepted result evidence kind
-`observation`. The attempt records local retention work, not a new provider request
-or a claim about historical provider costs. A recording in two catalogs has two
-independent source/document scopes even in the same workspace.
+`urn:recoup:retained-catalog-streams:<catalog UUID>:<recording UUID>:all_dsps:worldwide`
 
-One exact source version contains the bounded snapshot; one result links exactly
-that version. This preserves up to 62 daily observations without violating the
-ObjectRef maximum of 32 source-version IDs. Suggested content/normalized result:
+The source kind is `provider_metadata`; the locator is internal, not a provider URL
+or fetch target. Provider recording ID is version content, never part of this key.
+The stable topic is **`catalog_retained_streams`**. Existing document uniqueness
+therefore gives **one current document per owner/recording/topic across catalogs
+and windows**. A newly accepted catalog/window replaces via revision CAS, making
+old bindings stale. No dynamic query topics or simultaneous-current-window promise.
 
-```json
-{
-  "schemaVersion": 1,
-  "catalogId": "<UUID>",
-  "subjectId": "<UUID>",
-  "isrc": "USAAA2600001",
-  "metric": "luminate_all_dsp_worldwide_daily_streams",
-  "since": "2026-10-24",
-  "until": "2026-10-25",
-  "observations": [
-    {
-      "catalog_id": "<UUID>",
-      "isrc": "USAAA2600001",
-      "date": "2026-10-24",
-      "run_id": "<retained run UUID>",
-      "provider_recording_id": "provider-a",
-      "source_hash": "<retained opaque hash>",
-      "retrieved_at": "2026-10-25T00:00:00+00:00",
-      "streams": 100
-    }
-  ]
-}
-```
+One version contains the full bounded tuple bundle, and one accepted observation
+result links exactly that version. This keeps all 732 supported dates within one
+of ObjectRef's 32 allowed version IDs. Attempt provider `luminate`, recipe
+`retained-luminate-daily-v1`, schema `1` identify truthful local binding work. They
+must not imply a provider request, paid collection or confirmed historical cost.
 
-`since` inclusive / `until` exclusive, 1–62 completed UTC days; observations sorted
-by date. Preserve all eight tuple fields, including nullable streams. Missing days
-stay missing; null is unknown, never zero. Reject empty snapshots and mixed/empty
-provider IDs. Run ID must join the same catalog. Latest selection exactly matches
-Catalog's `retrieved_at DESC, run_id DESC`, without choosing a convenient older row.
-The metric is all-DSP worldwide Luminate daily streams; no rights, royalties,
-Spotify-only measure or aggregate catalog totals follow from this evidence.
+The strict evidence content is reconstructed by the proof, with no additional keys:
 
-Use SHA256 of UTC-serialized database JSONB text for **internal version deduplication**
-only. Do not confuse it with the retained `source_hash`, or promise equivalence to
-JavaScript JSON serialization. Source-version `retrieved_at` records local retention;
-each observation's provider retrieval time remains in content.
+- `schemaVersion: 1`, `workspaceId`, `catalogId`, `subjectId`, `isrc`.
+- `provider: luminate`, `metric: daily_streams`, `platform: all_dsps`,
+  `territory: worldwide`, `timezone: UTC`, `providerRecordingId`.
+- `since` inclusive and `until` exclusive span two equal completed UTC periods,
+  each 1–366 days (2–732 total dates). `periods` matches Catalog's previous/current
+  start/end_exclusive, days and timezone shape.
+- Sorted latest-per-date `observations`, with all eight fields:
+  `(catalog_id,isrc,date,run_id,provider_recording_id,source_hash,retrieved_at,streams)`.
+- Sorted `absentDates` and `nullDates`, kept separate; no synthetic absent tuple.
+- `retrievalRange: {earliest,latest}` from included retained observations.
 
-Minimality tradeoff: one current document per owner/recording/catalog. A newly
-accepted snapshot of another window also supersedes the prior current result;
-old selections refuse rather than silently refresh. If parallel windows must stay
-current, root/Catalog should instead adopt a window-qualified topic before building
-the writer. That is a document-currentness choice, not a new evidence store.
+Latest selection is exactly `retrieved_at DESC, run_id DESC`. Select the full set,
+then reject invalid lineage; never filter out a bad latest row to choose an older
+or convenient provider identity. Every row must join its run's catalog and fall
+within that run's **inclusive** since/until range. Collection runs remain at most
+62 dates; a comparison bundle can span many runs. Final run status does not erase
+earlier committed rows. No-row series refuses; zero and stored null remain distinct.
+Mixed provider IDs, blank IDs, non-64-hex hashes and nonfinite timestamps refuse.
+Accepted/stale/withdrawn results on the same source with a different retained
+provider ID also refuse pending an owning identity-switch disposition.
 
-## Proposed retention transaction (not implemented by this proof)
+`context_source_versions.retrieved_at` equals the **maximum included retained
+retrieval time**; the range remains in content. Binding time belongs in attempt/
+result provenance. Published/source-updated time remains unknown. No fake freshness.
+A future writer computes SHA256 of normalized UTC PostgreSQL JSONB text for internal
+version deduplication. It is distinct from Luminate's raw payload hash and the
+JavaScript surface hash; never claim cross-runtime serialization equality.
 
-1. Trusted API supplies authenticated actor/owner, exact existing request, subject,
-   catalog, window, expected current revision and expected observed tuple set.
-   Validate strict shapes and byte bounds in the API; do not accept source content,
-   provider assertions or owner IDs directly from descriptor payloads.
-2. Lock owner account → catalog → song (KEY SHARE), tracking row (UPDATE), actor
-   organization membership (SHARE), workspace/catalog then catalog/song memberships
-   (SHARE), request/expanded edge/resource/subjects (SHARE). Recheck the exact
-   resolver under these locks. Do not require collection `enabled=true` for retained
-   evidence. Tracking owner must match the selected owner.
-3. Read latest retained observations in the exact bounded window and compare with
-   the submitted expected tuples. Corrections arriving since the surface snapshot
-   require explicit rebuild/reselection. Reject missing rows, mismatches, mixed
-   provider IDs and a changed provider identity relative to this source's retained
-   history; a provider identity conflict needs Catalog reconciliation, not a new UUID.
-4. Under the tracking serialization lock, find **all** matching source locators,
-   including withdrawn sources. Refuse withdrawn, duplicate or ambiguous scope;
-   never recreate an active source to bypass withdrawal. Lock source before any
-   result/document. Initial creation and retry must serialize here. Existing generic
-   metadata/enrichment writers are not authorized for this reserved locator/topic.
-5. Insert/reuse the exact immutable version, reject removed versions. Create a local
-   attempt/result with trusted content and exactly one lineage link. Use expected
-   document revision and `accept_context_result`; failure rolls back all inserts.
-   Identical current request/result/version replay can return the same receipt;
-   an old receipt cannot restore an old current result. Cross-request reuse must
-   retain the original request reference or create an explicitly new result; the
-   proof requires the attempt's request to match the authorized request.
-6. Return owner/request/subject/catalog, topic, document revision, result ID and
-   exact version set. No provider request or collection is dispatched. A failed or
-   unknown acknowledgment requires exact receipt reconciliation, not paid retry.
+## Explicit size limits and field boundary
 
-These steps still need executable writer/CAS/retry/rollback tests before activation.
-The synthetic fixture deliberately inserts evidence directly to qualify the existing
-relations; it is not that production writer and does not prove its idempotency.
+Proof limits: evidence content at most **524,288 bytes (512 KiB)** in both UTF-8
+PostgreSQL JSONB text and `pg_column_size(JSONB)`; returned evidence envelope at most
+**786,432 bytes (768 KiB)** by the same two checks. Reject overflow, never truncate
+rows, versions or strings. The 732-date test spans 12 runs and fits these limits;
+large provider text may still make a shorter bundle refuse.
 
-## Exact read and durable authorization
+These evidence limits do not enlarge the existing durable command/source-part caps.
+A future API must separately measure the actual outgoing serialized UTF-8 bytes,
+and emit only a bounded field projection plus exact references into the descriptor.
+Do not copy a large evidence bundle into a capped chat data part or saved controls.
+The full evidence read envelope is not a durable mutation command.
 
-`read_binding` demonstrates current actor/member checks and joins the exact result,
-version, source, attempt and document revision. It checks snapshot content against
-current retained tuples and returns a single redacted JSON null for absent,
-inaccessible, unsupported, removed, mismatched or stale evidence. It never drops a
-failed version or substitutes latest into an old selection. Operational SQL errors
-remain errors; transport must not label them successful empty results.
+The proof requires `normalized_response = version.content` to qualify **evidence
+only**. It does not qualify complete-period sums/growth, percentage rounding,
+zero-baseline behavior, safe-total overflow or which descriptor field is supported.
+Those need the strict writer/result-field validator using existing
+`compareSpotifyDailyStreams` semantics before any field ObjectRef is enabled.
+Incomplete evidence may be retained without authorizing invented numeric totals.
 
-Future durable calls must hold their adopted session/chat/fence locks **before**
-this source boundary. The source boundary locks source/version before result/document,
-matching existing withdrawal. No callback from this boundary may acquire chat locks.
-The proof refuses isolation levels other than READ COMMITTED, so a preexisting
-repeatable-read snapshot cannot hide a correction committed before the tracking lock.
-It locks existing run/observation rows against update/delete and exact lineage links;
-the result UPDATE lock blocks new lineage links through their FK.
-The proof holds tracking before membership and source, matching the supported stream
-commit's parent order. It locks mutable request/resource/subject/edge participants
-before the existing resolver. Current request output only needs the catalog subject.
+## Proposed retention transaction (not implemented)
 
-Withdrawal uses the existing `withdraw_context_source`: all versions in this
-owner/catalog/recording scope become unavailable, results become withdrawn and current
-document pointers clear with a revision increment. This proposed scope needs Catalog
-acceptance. Collection disable retains evidence. Membership removal refuses future
-reads without deleting global identities or retained history. Neither operation
-proves removal from chat/export copies. No automatic source restoration is proposed.
+1. Derive actor/owner from trusted authentication; strictly validate exact request,
+   subject, catalog, periods, expected revision and observed tuple set. The descriptor
+   cannot supply authoritative source content, provider assertions or owner IDs.
+2. Hold durable session/chat/fence locks first when composing with a mutation.
+   Then owner account → catalog → song KEY SHARE; tracking UPDATE; actor membership,
+   workspace/catalog, catalog/song, request/edge/resource/subjects SHARE. Recheck the
+   exact expanded-member resolver. Require tracking owner, not enabled collection.
+3. Load full current tuples under that boundary; validate all run/identity/shape/
+   size and source-meaning checks. Compare expected tuples so a correction requires
+   explicit rebuild/reselection. Preserve all nulls/absences. Refuse provider switches
+   without an adopted source-owner disposition. Preserve explicit customer-assertion
+   corrections; no provider projection silently overwrites them.
+4. Find all matching source locators, including withdrawn history, under tracking
+   serialization. Refuse withdrawn/duplicate/ambiguous scope; never recreate an
+   active source to evade withdrawal. Lock source before result/document. Reserve
+   this locator/topic against generic writer paths before activation.
+5. Insert/reuse exact immutable version with retained retrieval max. Create a truthful
+   local attempt/result and exactly one lineage link. Validate derived fields before
+   field authorization. Use expected document revision and `accept_context_result`;
+   failure rolls back all inserts. Identical current replay can return its exact
+   receipt; an old receipt cannot restore an old current result. Preserve exact
+   originating request on reuse, or create an explicitly new result.
+6. Return exact result/topic/revision/version receipt. Unknown acknowledgment requires
+   receipt reconciliation, not provider retry or implicit collection.
 
-## Qualification and limits
+Concurrent first creation, CAS/retry/rollback and receipt behavior are not implemented
+or proven by direct fixture inserts. They remain required before runtime work.
 
-Run with a single PostgreSQL installation on PATH:
+## Read/lock qualification and withdrawal
 
-```sh
-python3 proposals/stream-evidence-binding-2207/test_binding.py
-```
+`read_binding` requires READ COMMITTED. Otherwise an earlier repeatable-read snapshot
+could miss a correction committed before the tracking lock. It authorizes exact
+actor/member/request/subject and current result/revision/source/version, reconstructs
+the full evidence bundle and compares retained tuples. It returns redacted JSON null
+for unavailable/stale/malformed evidence; operational SQL errors remain errors.
 
-Seventeen tests passed on local PostgreSQL 15 and 17. The harness creates a new
-Unix-socket-only cluster and applies the actual foundation, pipeline, catalog,
-execution, access and stream migrations. Synthetic parents and evidence are explicit.
-It never reads a hosted DSN. Tests cover exact expanded-member joins, wrong owner/
-actor/version/revision, missing memberships/edge/lineage, removed version, tuple
-mutation, correction/null/provider-change staleness, explicit corrected version,
-withdrawal and disable distinction. Real competing connections show that organization
-revocation, catalog membership removal, withdrawal and tracking updates wait for an
-authorized transaction. The inherited release-case lifecycle test also runs.
+Source/version locks precede result/document, matching withdrawal. Result UPDATE
+blocks new lineage FK links; existing links are SHARE locked. A new statement
+rechecks lineage count after result-lock acquisition, covering an insertion committed
+while the reader waited. Existing run/observation rows are SHARE locked against
+update/delete. The supported stream commit serializes on tracking. No source→chat
+callback or inverted chat lock acquisition is introduced.
 
-The 62-day bound limits output dates, not correction history or the number of
-rows scanned/locked: existing-row locks can cover many retained corrections per
-date. This proof does not claim a bounded lock footprint. A runtime writer/read
-needs a reviewed row/work budget and fail-closed overflow behavior.
+Withdrawal uses existing `withdraw_context_source`: all versions/results for that
+owned series become unavailable, current pointers clear and revisions advance.
+Historical withdrawn locator rows also prevent a replacement active source passing
+the reader. Collection disable is not withdrawal. Membership revocation removes
+current access without deleting retained rows/global identity. No provider retention
+policy, automatic republication or erasure of prior chat/export copies is implied.
 
-Not proven: production grants/RLS delivery, generic-writer exclusion, arbitrary direct
-SQL observation insertion/deletion races, all account/catalog cascade interleavings,
-concurrent first retention, writer idempotency/rollback, durable chat composition,
-strict API byte/schema validation or provider identity reconciliation. The tracking
-lock serializes the existing `commit_catalog_stream_track`; it is not an enforcement
-mechanism against direct table writers that bypass it. A runtime release must inventory
-and constrain participating writers before claiming that atomic boundary. This is a
-qualified proposal with explicit gaps, not production-ready authorization.
+## Qualification, limitations and next action
 
-Next: root obtains Catalog review of metric/provider conflict/withdrawal scope and
-current-window choice; adopt or revise this representation; implement and independently
-qualify the trusted retention writer and durable composition. No activation, migration,
-provider/customer operation or grant follows from source merge alone.
+Run `python3 proposals/stream-evidence-binding-2207/test_binding.py` with PostgreSQL
+on PATH. It creates a disposable Unix-socket-only cluster, applies actual existing
+migrations and uses explicitly synthetic parents/evidence. No hosted DSN is read.
+The revised suite has 25 tests; see `VECTOR-COVERAGE.md` for Catalog vector mapping.
+
+The 732-date cap bounds output dates, **not retained correction history or lock
+footprint**. Arbitrary direct inserts bypassing tracking are not serialized by this
+proof. Runtime work needs participating-writer enforcement, a row/work budget and
+fail-closed overflow behavior. No production grants/RLS delivery, all cascade
+interleavings, production writer idempotency/CAS/rollback, actual API transport byte
+validation, derived field validation or durable chat composition is qualified.
+
+Next: Catalog independently reviews alignment to adopted #1187; root reviews revised
+exact heads and fresh CI. Only after exact protocol adoption may the executable
+retention writer be built and qualified. Source merge alone activates nothing.

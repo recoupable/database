@@ -9,6 +9,8 @@ create function stream_binding_proposal.read_binding(
 declare
  isrc_value text; resolved jsonb; payload jsonb; actual jsonb; source_key uuid;
  first_day date; last_day date; topic_value text; source_uri text;
+ midpoint date; days_count integer; provider_id text; expected jsonb; envelope jsonb;
+ absent_days jsonb; null_days jsonb; earliest timestamptz; latest timestamptz; version_time timestamptz;
 begin
  if current_setting('transaction_isolation') <> 'read committed' then return 'null'::jsonb; end if;
  -- Parent order follows commit_catalog_stream_track. Chat/session locks, if any,
@@ -41,8 +43,8 @@ begin
  order by s.id for share of s;
  resolved:=public.resolve_context_catalog_member_recording(p_owner,p_request,p_subject);
  if resolved->>'isrc' is distinct from isrc_value then return 'null'::jsonb; end if;
- topic_value:='luminate_daily_streams_v1:'||p_catalog::text;
- source_uri:='urn:recoup:luminate-daily:'||p_catalog::text||':'||p_subject::text;
+ topic_value:='catalog_retained_streams';
+ source_uri:='urn:recoup:retained-catalog-streams:'||p_catalog::text||':'||p_subject::text||':all_dsps:worldwide';
  -- A replacement active row cannot restore this withdrawn source scope.
  if (select count(*) from public.context_sources where owner_id=p_owner
  and kind='provider_metadata' and source_url=source_uri)<>1
@@ -54,7 +56,7 @@ begin
  for share of s,v;
  if source_key is null then return 'null'::jsonb; end if;
  -- Source before result/document agrees with withdraw_context_source.
- select v.content into payload from public.context_results r
+ select v.content,v.retrieved_at into payload,version_time from public.context_results r
  join public.context_attempts a on a.id=r.attempt_id and a.owner_id=r.owner_id
  join public.context_result_sources rs on rs.result_id=r.id and rs.owner_id=r.owner_id
  join public.context_source_versions v on v.id=rs.source_version_id and v.owner_id=rs.owner_id
@@ -75,11 +77,13 @@ begin
  or payload->>'catalogId' is distinct from p_catalog::text
  or payload->>'subjectId' is distinct from p_subject::text
  or payload->>'isrc' is distinct from isrc_value
- or payload->>'metric' is distinct from 'luminate_all_dsp_worldwide_daily_streams'
+ or payload->>'metric' is distinct from 'daily_streams'
+ or octet_length(convert_to(payload::text,'UTF8'))>524288 or pg_column_size(payload)>524288
  then return 'null'::jsonb; end if;
  first_day:=(payload->>'since')::date; last_day:=(payload->>'until')::date;
- if first_day is null or last_day is null or last_day-first_day not between 1 and 62 or last_day>current_date
+ if first_day is null or last_day is null or last_day-first_day not between 2 and 732 or (last_day-first_day)%2<>0 or last_day>current_date
  then return 'null'::jsonb; end if;
+ days_count:=(last_day-first_day)/2; midpoint:=first_day+days_count;
  -- Lock retained rows and their run parents against mutation/removal. This does
  -- not prevent arbitrary direct inserts that bypass the tracking writer protocol.
  perform 1 from public.catalog_stream_runs r where r.catalog_id=p_catalog
@@ -94,17 +98,50 @@ begin
   select distinct on (o.date) o.catalog_id,o.isrc,o.date,o.run_id,o.provider_recording_id,
    o.source_hash,o.retrieved_at,o.streams
   from public.catalog_stream_observations o
-  join public.catalog_stream_runs r on r.id=o.run_id and r.catalog_id=o.catalog_id
   where o.catalog_id=p_catalog and o.isrc=isrc_value and o.date>=first_day and o.date<last_day
   order by o.date,o.retrieved_at desc,o.run_id desc
  ) x;
  if actual is null or actual is distinct from payload->'observations'
  or (select count(distinct x->>'provider_recording_id') from jsonb_array_elements(actual) x)<>1
- or exists(select 1 from jsonb_array_elements(actual) x where x->>'provider_recording_id'='')
+ or exists(select 1 from jsonb_array_elements(actual) x where (x->>'provider_recording_id') !~ '[^[:space:]]'
+  or (x->>'source_hash') !~ '^[0-9a-fA-F]{64}$'
+  or not isfinite((x->>'retrieved_at')::timestamptz)
+  or not exists(select 1 from public.catalog_stream_runs r where r.id=(x->>'run_id')::uuid
+    and r.catalog_id=p_catalog and (x->>'date')::date between r.since and r.until))
  then return 'null'::jsonb; end if;
- return jsonb_build_object('ownerId',p_owner,'subjectId',p_subject,'requestId',p_request,
+ provider_id:=actual->0->>'provider_recording_id';
+ -- An entirely replaced identity also needs an owning reconciliation disposition.
+ if exists(select 1 from public.context_source_versions v
+ join public.context_result_sources rs on rs.source_version_id=v.id and rs.owner_id=v.owner_id
+ join public.context_results r on r.id=rs.result_id and r.owner_id=rs.owner_id
+ where v.owner_id=p_owner and v.source_id=source_key and r.status in ('accepted','stale','withdrawn')
+ and r.subject_id=p_subject and r.topic=topic_value
+ and v.content->>'providerRecordingId' is distinct from provider_id)
+ then return 'null'::jsonb; end if;
+ select min((x->>'retrieved_at')::timestamptz),max((x->>'retrieved_at')::timestamptz)
+ into earliest,latest from jsonb_array_elements(actual) x;
+ select coalesce(jsonb_agg(d::date::text order by d),'[]'::jsonb) into absent_days
+ from generate_series(first_day::timestamp,(last_day-1)::timestamp,interval '1 day') d
+ where not exists(select 1 from jsonb_array_elements(actual) x where x->>'date'=d::date::text);
+ select coalesce(jsonb_agg(x->>'date' order by x->>'date'),'[]'::jsonb) into null_days
+ from jsonb_array_elements(actual) x where x->'streams'='null'::jsonb;
+ expected:=jsonb_build_object('schemaVersion',1,'workspaceId',p_owner,'catalogId',p_catalog,
+  'subjectId',p_subject,'isrc',isrc_value,'provider','luminate','metric','daily_streams',
+  'platform','all_dsps','territory','worldwide','timezone','UTC','since',first_day,'until',last_day,
+  'periods',jsonb_build_object('previous',jsonb_build_object('start',first_day,'end_exclusive',midpoint),
+   'current',jsonb_build_object('start',midpoint,'end_exclusive',last_day),'days',days_count,'timezone','UTC'),
+  'providerRecordingId',provider_id,'observations',actual,'absentDates',absent_days,'nullDates',null_days,
+  'retrievalRange',jsonb_build_object('earliest',earliest,'latest',latest));
+ -- Exact reconstruction rejects extra/malformed fields, wrong scope, missing/null
+ -- relabeling, and invented freshness. This is evidence-only, not derived totals.
+ if payload is distinct from expected or version_time is distinct from latest
+ then return 'null'::jsonb; end if;
+ envelope:=jsonb_build_object('ownerId',p_owner,'subjectId',p_subject,'requestId',p_request,
   'catalogId',p_catalog,'resultId',p_result,'revision',p_revision,'topic',topic_value,
   'sourceVersionIds',jsonb_build_array(p_version),'evidence',payload);
+ if octet_length(convert_to(envelope::text,'UTF8'))>786432 or pg_column_size(envelope)>786432
+ then return 'null'::jsonb; end if;
+ return envelope;
 exception when no_data_found or too_many_rows or insufficient_privilege or data_exception then
  return 'null'::jsonb;
 end $$;
