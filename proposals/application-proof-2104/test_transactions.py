@@ -136,6 +136,17 @@ class ProofTransactions(unittest.TestCase):
             self.call('verify','old',(1,1,3),self.observation(first))
         self.assertEqual(self.sql("SELECT state FROM application_proof_proposal.challenges WHERE id="+literal(first['challenge_id'])), 'superseded')
 
+    def test_failed_duplicate_rotation_restores_previous_pending_challenge(self):
+        original=self.issue()
+        self.call('issue',payload={'digest':'b'*64},actor=13,workspace=11,application=12)
+        with self.assertRaisesRegex(AssertionError,'duplicate key'):
+            self.call('issue','collision',(1,1,2),{'digest':'b'*64})
+        self.assertEqual(self.sql('SELECT state FROM application_proof_proposal.challenges WHERE id='+literal(original['challenge_id'])),'pending')
+        self.assertEqual(self.sql('SELECT cas_revision FROM proof_parent_fixture.origins WHERE workspace_id='+literal(uid(1))+" AND environment='production'"),'2')
+        self.assertEqual(self.sql('SELECT count(*) FROM application_proof_proposal.receipts'),'2')
+        self.assertEqual(self.sql("SELECT count(*) FROM application_proof_proposal.requests WHERE key='collision'"),'0')
+        self.assertEqual(self.call('verify','verify',(1,1,2),self.observation(original))['proof_revision'],2)
+
     def test_expiry_freshness_and_wrong_observations(self):
         issued = self.issue()
         for changes in [{'digest':'b'*64},{'query_name':'_recoup-app.example'},
