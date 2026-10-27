@@ -14,6 +14,15 @@ Its fixture inserts are not a retention writer. It does not authorize derived su
 growth or comparison fields: exact bundle equality is not a result-field validator.
 Root and Catalog review the revised exact heads before any further implementation.
 
+## Follow-on offline writer
+
+The [executable retention writer proposal](../stream-retention-writer-2207/PROTOCOL.md)
+now exercises the transaction described below outside migrations. It shares the
+extracted authority helper and adds logical row/history budgets to this reader.
+The original 25 read regressions remain; production writer activation and derived
+field authorization are still excluded. The original fixture remains a read fixture,
+not evidence that the separate writer ran.
+
 ## Existing source authority
 
 Database base `6ae03a0cc71dc2ad3955594c9cfcb6156c3fb8b8`; API inspection base
@@ -108,7 +117,7 @@ Those need the strict writer/result-field validator using existing
 `compareSpotifyDailyStreams` semantics before any field ObjectRef is enabled.
 Incomplete evidence may be retained without authorizing invented numeric totals.
 
-## Proposed retention transaction (not implemented)
+## Retention transaction design (offline follow-on linked above)
 
 1. Derive actor/owner from trusted authentication; strictly validate exact request,
    subject, catalog, periods, expected revision and observed tuple set. The descriptor
@@ -135,8 +144,9 @@ Incomplete evidence may be retained without authorizing invented numeric totals.
 6. Return exact result/topic/revision/version receipt. Unknown acknowledgment requires
    receipt reconciliation, not provider retry or implicit collection.
 
-Concurrent first creation, CAS/retry/rollback and receipt behavior are not implemented
-or proven by direct fixture inserts. They remain required before runtime work.
+Concurrent first creation, CAS/retry/rollback and receipt behavior are not proven
+by this read fixture. The separate executable writer suite now qualifies those
+operations offline; runtime integration remains gated.
 
 ## Read/lock qualification and withdrawal
 
@@ -174,6 +184,6 @@ fail-closed overflow behavior. No production grants/RLS delivery, all cascade
 interleavings, production writer idempotency/CAS/rollback, actual API transport byte
 validation, derived field validation or durable chat composition is qualified.
 
-Next: Catalog independently reviews alignment to adopted #1187; root reviews revised
-exact heads and fresh CI. Only after exact protocol adoption may the executable
-retention writer be built and qualified. Source merge alone activates nothing.
+The evidence protocol was adopted in Database #127. Current next work and writer
+qualification are recorded in the linked follow-on protocol; root retains review
+and activation authority. Source merge alone activates nothing.
