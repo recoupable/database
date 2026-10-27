@@ -43,6 +43,10 @@ begin
  if resolved->>'isrc' is distinct from isrc_value then return 'null'::jsonb; end if;
  topic_value:='luminate_daily_streams_v1:'||p_catalog::text;
  source_uri:='urn:recoup:luminate-daily:'||p_catalog::text||':'||p_subject::text;
+ -- A replacement active row cannot restore this withdrawn source scope.
+ if (select count(*) from public.context_sources where owner_id=p_owner
+ and kind='provider_metadata' and source_url=source_uri)<>1
+ then return 'null'::jsonb; end if;
  select s.id into source_key from public.context_sources s
  join public.context_source_versions v on v.source_id=s.id and v.owner_id=s.owner_id
  where s.owner_id=p_owner and s.source_url=source_uri and s.kind='provider_metadata'

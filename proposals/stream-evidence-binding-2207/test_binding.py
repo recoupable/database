@@ -177,6 +177,10 @@ class Binding(harness.ReleaseCases):
         value = self.sql(f"BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT stream_binding_proposal.read_binding('{uid(1)}','{uid(1)}','{uid(4)}','{uid(5)}','{uid(2)}','{uid(11)}','{uid(9)}',1); ROLLBACK").stdout
         self.assertIn('null', value.splitlines())
 
+    def test_active_replacement_cannot_bypass_withdrawn_scope(self):
+        self.sql(f"INSERT INTO context_sources(id,owner_id,source_url,kind,withdrawn_at) SELECT '{uid(14)}',owner_id,source_url,kind,now() FROM context_sources")
+        self.assertEqual(self.call(), 'null')
+
     def test_no_service_execute(self):
         self.assertEqual(self.sql("SELECT has_schema_privilege('service_role','stream_binding_proposal','USAGE')").stdout.strip(), 'f')
 

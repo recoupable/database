@@ -161,7 +161,7 @@ Run with a single PostgreSQL installation on PATH:
 python3 proposals/stream-evidence-binding-2207/test_binding.py
 ```
 
-Sixteen tests passed on local PostgreSQL 15 and 17. The harness creates a new
+Seventeen tests passed on local PostgreSQL 15 and 17. The harness creates a new
 Unix-socket-only cluster and applies the actual foundation, pipeline, catalog,
 execution, access and stream migrations. Synthetic parents and evidence are explicit.
 It never reads a hosted DSN. Tests cover exact expanded-member joins, wrong owner/
@@ -170,6 +170,11 @@ mutation, correction/null/provider-change staleness, explicit corrected version,
 withdrawal and disable distinction. Real competing connections show that organization
 revocation, catalog membership removal, withdrawal and tracking updates wait for an
 authorized transaction. The inherited release-case lifecycle test also runs.
+
+The 62-day bound limits output dates, not correction history or the number of
+rows scanned/locked: existing-row locks can cover many retained corrections per
+date. This proof does not claim a bounded lock footprint. A runtime writer/read
+needs a reviewed row/work budget and fail-closed overflow behavior.
 
 Not proven: production grants/RLS delivery, generic-writer exclusion, arbitrary direct
 SQL observation insertion/deletion races, all account/catalog cascade interleavings,
