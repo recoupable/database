@@ -63,6 +63,10 @@ begin
  and d.revision=p_revision and v.id=p_version and r.normalized_response=v.content
  and (select count(*) from public.context_result_sources x where x.result_id=r.id)=1
  for update of r for share of a,d,rs;
+ -- A link insertion may have held FK KEY SHARE before the result lock. Recheck
+ -- in a new READ COMMITTED statement after acquiring that lock.
+ if (select count(*) from public.context_result_sources where result_id=p_result)<>1
+ then return 'null'::jsonb; end if;
  if payload is null or payload->>'schemaVersion' is distinct from '1'
  or payload->>'catalogId' is distinct from p_catalog::text
  or payload->>'subjectId' is distinct from p_subject::text
@@ -70,7 +74,7 @@ begin
  or payload->>'metric' is distinct from 'luminate_all_dsp_worldwide_daily_streams'
  then return 'null'::jsonb; end if;
  first_day:=(payload->>'since')::date; last_day:=(payload->>'until')::date;
- if first_day is null or last_day is null or last_day-first_day not between 1 and 62
+ if first_day is null or last_day is null or last_day-first_day not between 1 and 62 or last_day>current_date
  then return 'null'::jsonb; end if;
  -- Lock retained rows and their run parents against mutation/removal. This does
  -- not prevent arbitrary direct inserts that bypass the tracking writer protocol.

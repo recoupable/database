@@ -4,6 +4,8 @@ import os
 import pathlib
 import sys
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 
 # Canonical retained timestamp serialization; proposal reader also pins UTC.
@@ -142,6 +144,34 @@ class Binding(harness.ReleaseCases):
         self.assertEqual(self.call(), 'null')
         value = json.loads(self.sql(f"SELECT stream_binding_proposal.read_binding('{uid(1)}','{uid(1)}','{uid(4)}','{uid(5)}','{uid(2)}','{uid(15)}','{uid(14)}',2)").stdout)
         self.assertEqual(value['evidence']['observations'][0]['streams'], 200)
+
+    def test_link_insert_before_reader_lock_is_rechecked(self):
+        self.sql(f"INSERT INTO context_source_versions(id,owner_id,source_id,fingerprint,content) SELECT '{uid(14)}',owner_id,source_id,repeat('d',64),content FROM context_source_versions")
+        holder = subprocess.Popen(['psql', '-h', self.tmp.name, '-p', '55473', '-d', 'postgres',
+            '-XAt', '-v', 'ON_ERROR_STOP=1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
+        try:
+            holder.stdin.write(f"BEGIN; INSERT INTO context_result_sources VALUES ('{uid(1)}','{uid(11)}','{uid(14)}');\n\\echo HELD\n")
+            holder.stdin.flush()
+            while holder.stdout.readline().strip() != 'HELD':
+                if holder.poll() is not None:
+                    self.fail('Link insertion holder exited')
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(self.call)
+                deadline = time.monotonic() + 5
+                saw_wait = False
+                while time.monotonic() < deadline:
+                    waits = self.sql("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%read_binding%'").stdout.strip()
+                    if int(waits):
+                        saw_wait = True
+                        break
+                    time.sleep(0.02)
+                holder.communicate('COMMIT;\n', timeout=10)
+                self.assertTrue(saw_wait, 'Reader never reached the conflicting result lock')
+                self.assertEqual(result.result(timeout=10), 'null')
+        finally:
+            if holder.poll() is None:
+                holder.communicate('ROLLBACK;\n', timeout=10)
 
     def test_repeatable_read_refused(self):
         value = self.sql(f"BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT stream_binding_proposal.read_binding('{uid(1)}','{uid(1)}','{uid(4)}','{uid(5)}','{uid(2)}','{uid(11)}','{uid(9)}',1); ROLLBACK").stdout

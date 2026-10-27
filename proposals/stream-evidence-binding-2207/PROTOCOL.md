@@ -161,7 +161,7 @@ Run with a single PostgreSQL installation on PATH:
 python3 proposals/stream-evidence-binding-2207/test_binding.py
 ```
 
-Fifteen tests passed on local PostgreSQL 15 and 17. The harness creates a new
+Sixteen tests passed on local PostgreSQL 15 and 17. The harness creates a new
 Unix-socket-only cluster and applies the actual foundation, pipeline, catalog,
 execution, access and stream migrations. Synthetic parents and evidence are explicit.
 It never reads a hosted DSN. Tests cover exact expanded-member joins, wrong owner/
