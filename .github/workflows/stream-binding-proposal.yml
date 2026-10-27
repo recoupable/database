@@ -5,6 +5,7 @@ on:
     paths:
       - "proposals/stream-evidence-binding-2207/**"
       - "proposals/stream-retention-writer-2207/**"
+      - "proposals/retained-field-integration-2207/**"
       - "tests/test_release_cases.py"
       - "supabase/migrations/**"
       - ".github/workflows/stream-binding-proposal.yml"
@@ -36,3 +37,26 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 proposals/stream-retention-writer-2207/test_writer.py
+      - uses: actions/checkout@v4
+        with:
+          repository: recoupable/api
+          ref: 6ba799dbb67be284adcd6f8bcd8fcde2faa6c2b8
+          path: .worktrees/api/catalog-integration
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install pinned evaluator dependencies
+        timeout-minutes: 4
+        working-directory: .worktrees/api/catalog-integration
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Qualify actual retention through field computation
+        timeout-minutes: 3
+        env:
+          CATALOG_API_SOURCE: ${{ github.workspace }}/.worktrees/api/catalog-integration
+        run: |
+          export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
+          python3 proposals/retained-field-integration-2207/test_integration.py
