@@ -2,6 +2,71 @@
 -- No tables, runtime call sites, service grants, collection or implicit expansion.
 create schema stream_binding_proposal;
 revoke all on schema stream_binding_proposal from public,anon,authenticated,service_role;
+create function stream_binding_proposal.within_budget(p_owner uuid,p_catalog uuid,p_subject uuid,p_isrc text,p_since date,p_until date)
+returns boolean language plpgsql set search_path='' as $$
+declare n bigint; bytes bigint; uri text;
+begin
+ if p_since is null or p_until is null or not isfinite(p_since) or not isfinite(p_until)
+ or p_until-p_since not between 2 and 732 or (p_until-p_since)%2<>0 or p_until>current_date
+ then return false; end if;
+ -- Cap visited matching history rows before locking/aggregating full evidence.
+ select count(*),coalesce(sum(pg_column_size(x)+octet_length(x.provider_recording_id)+octet_length(x.source_hash)),0)
+ into n,bytes from (select o.* from public.catalog_stream_observations o
+ where o.catalog_id=p_catalog and o.isrc=p_isrc and o.date>=p_since and o.date<p_until limit 4097) x;
+ if n>4096 or bytes>8388608 then return false; end if;
+ uri:='urn:recoup:retained-catalog-streams:'||p_catalog::text||':'||p_subject::text||':all_dsps:worldwide';
+ select count(*) into n from (select 1 from public.context_sources
+ where owner_id=p_owner and kind='provider_metadata' and source_url=uri limit 2) x;
+ if n>1 then return false; end if;
+ select count(*),coalesce(sum(octet_length(x.content::text)),0) into n,bytes from (
+ select v.content from public.context_source_versions v join public.context_sources s on s.id=v.source_id and s.owner_id=v.owner_id
+ where s.owner_id=p_owner and s.source_url=uri and s.kind='provider_metadata' limit 257) x;
+ if n>256 or bytes>8388608 then return false; end if;
+ select count(*) into n from (select 1 from public.context_result_sources rs
+ join public.context_source_versions v on v.id=rs.source_version_id and v.owner_id=rs.owner_id
+ join public.context_sources s on s.id=v.source_id and s.owner_id=v.owner_id
+ where s.owner_id=p_owner and s.source_url=uri and s.kind='provider_metadata' limit 513) x;
+ return n<=512;
+end $$;
+revoke all on function stream_binding_proposal.within_budget(uuid,uuid,uuid,text,date,date) from public,anon,authenticated,service_role;
+create function stream_binding_proposal.lock_scope(p_actor uuid,p_owner uuid,p_request uuid,p_subject uuid,p_catalog uuid)
+returns text language plpgsql set search_path='' as $$
+declare isrc_value text; resolved jsonb;
+begin
+ if current_setting('transaction_isolation') <> 'read committed' then return null; end if;
+ -- Parent order follows commit_catalog_stream_track. Chat/session locks, if any,
+ -- must be acquired by a future durable caller before entering this boundary.
+ perform 1 from public.accounts where id=p_owner for key share;
+ if not found then return null; end if;
+ perform 1 from public.catalogs where id=p_catalog for key share;
+ if not found then return null; end if;
+ select song_isrc into isrc_value from public.context_subjects where id=p_subject and kind='recording';
+ if isrc_value is null then return null; end if;
+ perform 1 from public.songs where isrc=isrc_value for key share;
+ perform 1 from public.catalog_stream_tracking where catalog_id=p_catalog and owner_id=p_owner for update;
+ if not found then return null; end if;
+ perform public.authorize_context_case_actor(p_actor,p_owner);
+ perform 1 from public.account_catalogs where account=p_owner and catalog=p_catalog for share;
+ if not found then return null; end if;
+ perform 1 from public.catalog_songs where catalog=p_catalog and song=isrc_value for share;
+ if not found then return null; end if;
+ perform 1 from public.context_requests where id=p_request and owner_id=p_owner for share;
+ perform 1 from public.context_request_catalog_members
+ where owner_id=p_owner and request_id=p_request and recording_subject_id=p_subject
+ and catalog_id=p_catalog and song_isrc=isrc_value for share;
+ if not found then return null; end if;
+ -- Lock all mutable identity participants before invoking the existing exact resolver.
+ perform 1 from public.context_resources r join public.context_requests q on q.resource_id=r.id
+ where q.id=p_request for share of r;
+ perform 1 from public.context_subjects s join public.context_request_catalog_members m
+ on s.id in (m.catalog_subject_id,m.recording_subject_id)
+ where m.owner_id=p_owner and m.request_id=p_request and m.recording_subject_id=p_subject
+ order by s.id for share of s;
+ resolved:=public.resolve_context_catalog_member_recording(p_owner,p_request,p_subject);
+ if resolved->>'isrc' is distinct from isrc_value then return null; end if;
+ return isrc_value;
+end $$;
+revoke all on function stream_binding_proposal.lock_scope(uuid,uuid,uuid,uuid,uuid) from public,anon,authenticated,service_role;
 create function stream_binding_proposal.read_binding(
  p_actor uuid,p_owner uuid,p_request uuid,p_subject uuid,p_catalog uuid,
  p_result uuid,p_version uuid,p_revision bigint
@@ -12,37 +77,8 @@ declare
  midpoint date; days_count integer; provider_id text; expected jsonb; envelope jsonb;
  absent_days jsonb; null_days jsonb; earliest timestamptz; latest timestamptz; version_time timestamptz;
 begin
- if current_setting('transaction_isolation') <> 'read committed' then return 'null'::jsonb; end if;
- -- Parent order follows commit_catalog_stream_track. Chat/session locks, if any,
- -- must be acquired by a future durable caller before entering this boundary.
- perform 1 from public.accounts where id=p_owner for key share;
- if not found then return 'null'::jsonb; end if;
- perform 1 from public.catalogs where id=p_catalog for key share;
- if not found then return 'null'::jsonb; end if;
- select song_isrc into isrc_value from public.context_subjects where id=p_subject and kind='recording';
+ isrc_value:=stream_binding_proposal.lock_scope(p_actor,p_owner,p_request,p_subject,p_catalog);
  if isrc_value is null then return 'null'::jsonb; end if;
- perform 1 from public.songs where isrc=isrc_value for key share;
- perform 1 from public.catalog_stream_tracking where catalog_id=p_catalog and owner_id=p_owner for update;
- if not found then return 'null'::jsonb; end if;
- perform public.authorize_context_case_actor(p_actor,p_owner);
- perform 1 from public.account_catalogs where account=p_owner and catalog=p_catalog for share;
- if not found then return 'null'::jsonb; end if;
- perform 1 from public.catalog_songs where catalog=p_catalog and song=isrc_value for share;
- if not found then return 'null'::jsonb; end if;
- perform 1 from public.context_requests where id=p_request and owner_id=p_owner for share;
- perform 1 from public.context_request_catalog_members
- where owner_id=p_owner and request_id=p_request and recording_subject_id=p_subject
- and catalog_id=p_catalog and song_isrc=isrc_value for share;
- if not found then return 'null'::jsonb; end if;
- -- Lock all mutable identity participants before invoking the existing exact resolver.
- perform 1 from public.context_resources r join public.context_requests q on q.resource_id=r.id
- where q.id=p_request for share of r;
- perform 1 from public.context_subjects s join public.context_request_catalog_members m
- on s.id in (m.catalog_subject_id,m.recording_subject_id)
- where m.owner_id=p_owner and m.request_id=p_request and m.recording_subject_id=p_subject
- order by s.id for share of s;
- resolved:=public.resolve_context_catalog_member_recording(p_owner,p_request,p_subject);
- if resolved->>'isrc' is distinct from isrc_value then return 'null'::jsonb; end if;
  topic_value:='catalog_retained_streams';
  source_uri:='urn:recoup:retained-catalog-streams:'||p_catalog::text||':'||p_subject::text||':all_dsps:worldwide';
  -- A replacement active row cannot restore this withdrawn source scope.
@@ -83,6 +119,7 @@ begin
  first_day:=(payload->>'since')::date; last_day:=(payload->>'until')::date;
  if first_day is null or last_day is null or last_day-first_day not between 2 and 732 or (last_day-first_day)%2<>0 or last_day>current_date
  then return 'null'::jsonb; end if;
+ if not stream_binding_proposal.within_budget(p_owner,p_catalog,p_subject,isrc_value,first_day,last_day) then return 'null'::jsonb; end if;
  days_count:=(last_day-first_day)/2; midpoint:=first_day+days_count;
  -- Lock retained rows and their run parents against mutation/removal. This does
  -- not prevent arbitrary direct inserts that bypass the tracking writer protocol.
