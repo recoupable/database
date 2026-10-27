@@ -1,6 +1,6 @@
 # Private release-pack jobs
 
-Apply `20261020150000_release_pack_jobs.sql` before deploying its API caller. It adds two private, service-only tables, one pack command RPC, a reservation-aware monthly floor, and atomic legacy balance adjustment/topup RPCs. No hosted data is changed by the test fixture.
+Apply `20261020154953_release_pack_jobs.sql` before deploying its API caller. It adds two private, service-only tables, one pack command RPC, a reservation-aware monthly floor, and atomic legacy balance adjustment/topup RPCs. No hosted data is changed by the test fixture.
 
 ```sh
 # PostgreSQL 16/17 binaries must be on PATH; macOS example:
