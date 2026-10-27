@@ -33,3 +33,4 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 proposals/application-proof-2104/test_transactions.py
+          python3 proposals/application-proof-2104/test_configuration.py
