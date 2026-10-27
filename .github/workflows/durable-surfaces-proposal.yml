@@ -1,0 +1,35 @@
+name: Durable surfaces proposal (offline only)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "proposals/durable-surfaces-2207/**"
+      - "proposals/chat-writer-fencing-636/**"
+      - "supabase/migrations/20260501000000_open_agents_sessions_and_chats.sql"
+      - ".github/workflows/durable-surfaces-proposal.yml"
+permissions:
+  contents: read
+jobs:
+  disposable-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 17]
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 1
+      - name: Install PostgreSQL
+        timeout-minutes: 12
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-${{ matrix.postgres }}
+      - name: Verify working surfaces and fencing regressions on synthetic data
+        timeout-minutes: 3
+        env:
+          PG_BIN: /usr/lib/postgresql/${{ matrix.postgres }}/bin
+        run: python3 proposals/durable-surfaces-2207/test_mechanics.py
