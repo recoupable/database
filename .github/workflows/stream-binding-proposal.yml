@@ -20,6 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         timeout-minutes: 1
+        with:
+          persist-credentials: false
       - name: Install PostgreSQL
         timeout-minutes: 12
         run: |
