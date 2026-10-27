@@ -1,0 +1,35 @@
+name: Application proof transactions (offline only)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "proposals/application-proof-2104/**"
+      - ".github/workflows/application-proof-proposal.yml"
+permissions:
+  contents: read
+jobs:
+  disposable-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 17]
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 1
+        with:
+          persist-credentials: false
+      - name: Install PostgreSQL
+        timeout-minutes: 12
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-${{ matrix.postgres }}
+      - name: Qualify disabled proof receipts and transaction races
+        timeout-minutes: 3
+        run: |
+          export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
+          python3 proposals/application-proof-2104/test_transactions.py
