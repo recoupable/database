@@ -25,7 +25,7 @@ class IngestionCatalog(unittest.TestCase):
         cls.addClassCleanup(cls.stop)
         cls.sql('''CREATE ROLE service_role BYPASSRLS; CREATE ROLE anon; CREATE ROLE authenticated;
           CREATE TABLE public.accounts(id uuid PRIMARY KEY);
-          CREATE TABLE public.account_organization_ids(account_id uuid, organization_id uuid);
+          CREATE TABLE public.account_organization_ids(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid REFERENCES public.accounts(id), organization_id uuid REFERENCES public.accounts(id), updated_at timestamptz DEFAULT now());
           GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;''')
         for migration in MIGRATIONS:
             cls.sql((ROOT / 'supabase/migrations' / migration).read_text())
@@ -45,7 +45,7 @@ class IngestionCatalog(unittest.TestCase):
     def setUp(self):
         self.actor, self.org, self.other = [str(uuid.uuid4()) for _ in range(3)]
         self.job = 'a' * 64
-        self.sql(f"INSERT INTO accounts VALUES ('{self.actor}'),('{self.org}'),('{self.other}'); INSERT INTO account_organization_ids VALUES ('{self.actor}','{self.org}')")
+        self.sql(f"INSERT INTO accounts VALUES ('{self.actor}'),('{self.org}'),('{self.other}'); INSERT INTO account_organization_ids(account_id,organization_id) VALUES ('{self.actor}','{self.org}')")
 
     def manifest(self, job=None, dataset=None, org=None):
         job, org = job or self.job, org or self.org
