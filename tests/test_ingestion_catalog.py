@@ -145,7 +145,7 @@ class IngestionCatalog(unittest.TestCase):
     def test_private_original_scope_and_unknown_dataset(self):
         value = self.manifest()
         value['bronze_key'] = f'organization/{self.other}/originals/' + 'c' * 64
-        self.assertNotEqual(self.sql(self.statement('register', {'manifest': value}), succeeds=False).returncode, 0)
+        self.assertIn('Invalid ingestion catalog input', self.sql(self.statement('register', {'manifest': value}), succeeds=False).stderr)
         self.denied('register', {'manifest': self.manifest(dataset=str(uuid.uuid4()))})
 
     def test_records_pagination_is_bounded_and_version_specific(self):
@@ -177,10 +177,10 @@ class IngestionCatalog(unittest.TestCase):
 
     def test_browser_and_service_direct_table_access_denied(self):
         for role in ['anon', 'authenticated']:
-            self.assertNotEqual(self.sql(self.statement('datasets', {}, role=role), succeeds=False).returncode, 0)
+            self.assertIn('permission denied', self.sql(self.statement('datasets', {}, role=role), succeeds=False).stderr)
         for table in ['ingestion_datasets', 'ingestion_imports', 'ingestion_records']:
             for role in ['anon', 'authenticated', 'service_role']:
-                self.assertNotEqual(self.sql(f'SET ROLE {role}; SELECT * FROM public.{table}', succeeds=False).returncode, 0)
+                self.assertIn('permission denied', self.sql(f'SET ROLE {role}; SELECT * FROM public.{table}', succeeds=False).stderr)
         self.assertEqual(self.sql("SELECT count(*) FROM pg_class WHERE relname IN ('ingestion_datasets','ingestion_imports','ingestion_records') AND relrowsecurity").stdout.strip(), '3')
 
     @unittest.skipUnless(os.environ.get('INGESTION_API_WORKTREE'), 'Optional API worktree integration')
