@@ -1,0 +1,37 @@
+name: Organization ingestion catalog
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/*_ingestion_catalog.sql"
+      - "tests/test_ingestion_catalog.py"
+      - ".github/workflows/ingestion-catalog.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/*_ingestion_catalog.sql"
+      - "tests/test_ingestion_catalog.py"
+      - ".github/workflows/ingestion-catalog.yml"
+permissions:
+  contents: read
+jobs:
+  ingestion-catalog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 17]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-${{ matrix.postgres }}
+      - name: Verify shared organization data and access
+        run: |
+          export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
+          python3 -m unittest discover -s tests -p 'test_ingestion_catalog.py'

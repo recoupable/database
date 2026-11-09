@@ -1,5 +1,9 @@
 # Recoup Supabase
 
+## Organization ingestion datasets
+
+The additive ingestion catalog stores organization-owned datasets, import history and validated gold rows in the existing database. See [schema, tests and rollout](tests/INGESTION-CATALOG.md). Original files remain in private Storage; no per-client database is provisioned.
+
 Supabase migration scripts for the Recoup project.
 
 ## Scheduled posts migration
