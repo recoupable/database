@@ -3,13 +3,13 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "supabase/migrations/*_ingestion_catalog.sql"
+      - "supabase/migrations/*_ingestion_catalog*.sql"
       - "tests/test_ingestion_catalog.py"
       - ".github/workflows/ingestion-catalog.yml"
   push:
     branches: [main]
     paths:
-      - "supabase/migrations/*_ingestion_catalog.sql"
+      - "supabase/migrations/*_ingestion_catalog*.sql"
       - "tests/test_ingestion_catalog.py"
       - ".github/workflows/ingestion-catalog.yml"
 permissions:

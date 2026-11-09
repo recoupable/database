@@ -1,10 +1,10 @@
 # Organization ingestion catalog
 
-`20261110010000_ingestion_catalog.sql` adds organization-owned datasets, immutable import versions and queryable gold rows to the existing Recoup database. No database or schema is created per client. Original files and processing artifacts stay in private Supabase Storage.
+`20261110010000_ingestion_catalog.sql` adds organization-owned datasets, immutable import versions and queryable gold rows to the existing Recoup database. Apply `20261110010100_ingestion_catalog_page_budget.sql` immediately afterward for bounded inline record pages. The initial migration is preserved; the correction is forward-only. No database or schema is created per client. Original files and processing artifacts stay in private Supabase Storage.
 
 The only runtime database entry point is `ingestion_catalog_command(actor, organization, action, input)`. It is executable by the service role only. The authenticated API supplies the actor; every command checks current organization membership and holds its membership lock through commit. Tables have RLS and no direct browser or service-role privileges. The security-definer functions use an empty search path and fully qualified relations. The internal authorization helper cannot be called by browser or service roles.
 
-`register` assigns a new dataset or attaches an import to an existing dataset in the same organization. Immutable manifests bind the scoped source object, contract and selected dataset. `complete` publishes ready gold rows and the import receipt atomically, or records held/rejected metadata without gold. Repeated completion must match the entire original completion payload. Lists and row pages are bounded and scoped; reading rows requires both dataset and import version. New imports do not replace earlier records or imply semantic deduplication across statements.
+`register` assigns a new dataset or attaches an import to an existing dataset in the same organization. Immutable manifests bind the scoped source object, contract and selected dataset. `complete` publishes ready gold rows and the import receipt atomically, or records held/rejected metadata without gold. Repeated completion must match the entire original completion payload. Lists and row pages are bounded and scoped; record payloads have a 2 MiB page budget and oversized individual rows return a controlled error rather than disappearing. Reading rows requires both dataset and import version. New imports do not replace earlier records or imply semantic deduplication across statements.
 
 Run isolated tests with PostgreSQL binaries from one installation on PATH:
 
@@ -31,4 +31,4 @@ If rolling back, revert dependent API behavior first and retain datasets/import 
 
 ## Status — 2026-11-09
 
-Local PostgreSQL 17 verification passes ten database tests plus the optional joined API lifecycle test. CI covers PostgreSQL 15 and 17. Migration deployment, hosted org-scoped ingestion and production activation remain unverified and are separate rollout steps.
+Local PostgreSQL 17 verification passes twelve database tests plus the optional joined API lifecycle test. CI covers PostgreSQL 15 and 17. Migration deployment, hosted org-scoped ingestion and production activation remain unverified and are separate rollout steps.

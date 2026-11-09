@@ -9,7 +9,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MIGRATION = '20261110010000_ingestion_catalog.sql'
+MIGRATIONS = ['20261110010000_ingestion_catalog.sql', '20261110010100_ingestion_catalog_page_budget.sql']
 
 
 class IngestionCatalog(unittest.TestCase):
@@ -27,7 +27,8 @@ class IngestionCatalog(unittest.TestCase):
           CREATE TABLE public.accounts(id uuid PRIMARY KEY);
           CREATE TABLE public.account_organization_ids(account_id uuid, organization_id uuid);
           GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;''')
-        cls.sql((ROOT / 'supabase/migrations' / MIGRATION).read_text())
+        for migration in MIGRATIONS:
+            cls.sql((ROOT / 'supabase/migrations' / migration).read_text())
 
     @classmethod
     def stop(cls):
@@ -156,6 +157,23 @@ class IngestionCatalog(unittest.TestCase):
         self.assertIsNone(second['next_after'])
         self.assertEqual(second['records'][0]['record']['id'], '002')
         self.assertNotEqual(self.sql(self.statement('records', {'dataset_id': dataset, 'job_id': self.job, 'limit': 101}), succeeds=False).returncode, 0)
+
+    def test_record_pages_have_a_byte_budget(self):
+        dataset = self.register()['dataset_id']
+        records = [{'id': 'x' * 150000 + str(i), 'amount': '1'} for i in range(20)]
+        self.call('complete', self.completion(records=records))
+        first = self.call('records', {'dataset_id': dataset, 'job_id': self.job, 'limit': 25})
+        self.assertLess(len(first['records']), 20)
+        self.assertGreater(len(first['records']), 0)
+        second = self.call('records', {'dataset_id': dataset, 'job_id': self.job, 'limit': 25, 'after_row': first['next_after']})
+        self.assertEqual(len(first['records']) + len(second['records']), 20)
+        self.assertIsNone(second['next_after'])
+
+    def test_an_oversized_single_record_is_not_silently_skipped(self):
+        dataset = self.register()['dataset_id']
+        self.call('complete', self.completion(records=[{'id': 'x' * (3 * 1024 * 1024), 'amount': '1'}]))
+        result = self.sql(self.statement('records', {'dataset_id': dataset, 'job_id': self.job}), succeeds=False)
+        self.assertIn('Ingestion record size limit', result.stderr)
 
     def test_browser_and_service_direct_table_access_denied(self):
         for role in ['anon', 'authenticated']:
