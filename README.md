@@ -2,6 +2,10 @@
 
 Supabase migration scripts for the Recoup project.
 
+## Organization ingestion datasets
+
+The additive ingestion catalog stores organization-owned datasets, import history and validated gold rows in the existing database. See [schema, tests and rollout](tests/INGESTION-CATALOG.md). Original files remain in private Storage; no per-client database is provisioned.
+
 ## Scheduled posts migration
 
 `20261015230000_create_scheduled_posts.sql` adds `scheduled_posts` for `POST /api/posts`; see [tests/SCHEDULED-POSTS.md](tests/SCHEDULED-POSTS.md).
