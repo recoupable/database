@@ -23,4 +23,5 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
           python3 -m unittest discover -s tests -p 'test_*roster.py'
+          python3 -m unittest discover -s tests -p 'test_identity_conflicts.py'
           python3 -m unittest discover -s tests -p 'test_spotify_onboarding.py'

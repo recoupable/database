@@ -36,6 +36,35 @@ Replaying the same organization/actor/key and normalized input returns the saved
 Research-to-roster isolation: see [RESEARCH-ROSTER.md](RESEARCH-ROSTER.md) for the
 real transaction suite, preserved evidence, explicit enrollment and deployment limits.
 
+## Identity conflict quarantine
+
+Run `python3 -m unittest discover -s tests -p 'test_identity_conflicts.py'` on disposable local
+PostgreSQL. It extends the research-roster suite with `20261010211900_context_identity_conflict_quarantine.sql`,
+so the inherited research-roster and onboarding regressions also run against the new function. It covers
+a Spotify track already mapped to a different ISRC through legacy `song_identifiers`, retry idempotence,
+resolution after the legacy mapping is removed, a later observation that confirms the quarantined ISRC,
+a reviewed (non-accepted) link that would otherwise block acceptance, an accepted identity link to
+another recording, claimed and ready guest completion/adoption, unchanged non-conflicting research and
+browser-role denial. On macOS a locale must be exported (for example `LC_ALL=C`) or the postmaster
+refuses to start.
+
+Apply the migration before deploying API consumers that read `output.identityConflicts`. A legacy
+conflicting mapping is saved as a `conflict` identity link from the track to the existing recording
+subject (created if absent), carrying both ISRCs, the provider ID, source URL, retrieval time and
+observed title; no private request ID is copied into this shared evidence. An accepted identity link to
+another recording is reported through `linkIds` and never downgraded. The request fails with an
+`identity_conflict: ` error and `output.identityConflicts`; no songs, identifiers, observed recording,
+release or artist subjects, artists or documents are written. A guest workspace still becomes `ready`
+(its payload was extracted) while the destination request reports the conflict.
+
+When a later verified observation is accepted for the same track, a conflict link to that recording is
+promoted to `accepted` (its evidence kept under `resolvedConflict`) and the track's other open conflict
+links become `rejected` with `resolution`, `acceptedIsrc` and `resolvedAt` added to their evidence. A
+`candidate` or `rejected` link that still blocks acceptance raises instead of completing without an
+accepted identity. Artist-identity ambiguity still rejects transactionally. There is no automatic
+merge/split, review operation or cleanup of existing rows; hosted application and live verification
+remain outside this fixture.
+
 ## Organization-owned player fan contacts
 
 Run `python3 -m unittest discover -s tests -p 'test_player_org_fans.py'` on disposable local PostgreSQL. The suite applies the actual `20261010100000_player_organization_contacts.sql` migration to legacy synthetic fan data and exercises backfill, stable relationship/session IDs, latest non-null contact profiles, parallel sign-ins, separate provider identities despite identical emails, cross-workspace isolation, browser-role denial and existing playback/reporting behavior. CI runs both player suites on PostgreSQL 15 and 16.
