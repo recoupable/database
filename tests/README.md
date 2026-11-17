@@ -44,7 +44,7 @@ Rollout: apply the contact migration before deploying API readers of `contact_id
 
 ## Professional artist accounts
 
-Apply `20261023160000_professional_artist_accounts.sql` before deploying the API
+Apply `20261024002432_professional_artist_accounts.sql` before deploying the API
 and app changes that require `professional.artist_id`. This field references
 `accounts.id`, using the existing artist terminology and workflows. New confirmed
 professionals use `create_artist_with_roster` in the same transaction as roles and
