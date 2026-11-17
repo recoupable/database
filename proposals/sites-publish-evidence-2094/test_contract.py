@@ -96,9 +96,9 @@ class SitesEvidence(harness.ReleaseCases):
     def record(self, **kwargs):
         return json.loads(self.execute(self.record_sql(**kwargs)))
 
-    def publish_sql(self, record, actor=2, owner=1, revision=2, expected_pointer=None, expected_digest=None):
+    def publish_sql(self, record, actor=2, owner=1, revision=2, expected_pointer=None, expected_digest=None, expected_artist=None):
         args = [uid(actor), uid(owner), uid(10), revision, record['id'],
-                expected_digest or record['candidateSha256'], expected_pointer]
+                expected_digest or record['candidateSha256'], expected_pointer, expected_artist]
         return 'SELECT sites_evidence_proposal.publish_candidate(' + ','.join(literal(v) for v in args) + ');'
 
     def state(self):
@@ -145,7 +145,7 @@ class SitesEvidence(harness.ReleaseCases):
                 self.execute(statement)
 
     def test_execute_privilege_revocation(self):
-        signature = 'sites_evidence_proposal.publish_candidate(uuid,uuid,uuid,integer,uuid,text,uuid)'
+        signature = 'sites_evidence_proposal.publish_candidate(uuid,uuid,uuid,integer,uuid,text,uuid,uuid)'
         row = self.record()
         self.sql('REVOKE EXECUTE ON FUNCTION ' + signature + ' FROM service_role;')
         try:
@@ -320,7 +320,7 @@ class SitesEvidence(harness.ReleaseCases):
             self.execute(self.publish_sql(row))
             self.execute(statement)
             self.assertIsNone(json.loads(self.state())['published_evidence_id'])
-        self.execute(self.publish_sql(row))
+        self.execute(self.publish_sql(row, expected_artist=uid(4)))
         self.execute('UPDATE sites SET draft=draft,revision=revision+1,artist_id=artist_id;')
         self.assertEqual(json.loads(self.state())['published_evidence_id'], row['id'])
         with self.assertRaisesRegex(AssertionError, 'pointer'):
@@ -441,6 +441,58 @@ class SitesEvidence(harness.ReleaseCases):
             with self.assertRaisesRegex(AssertionError, 'Evidence owner'):
                 self.execute(f"UPDATE sites SET owner_id='{uid(4)}';")
             self.assertEqual(self.state(), before)
+
+    def test_artist_selection_conflict_after_final_api_read(self):
+        row = self.record()
+        for selected, current in [(uid(3), uid(4)), (uid(3), None), (None, uid(4))]:
+            with self.subTest(selected=selected, current=current):
+                self.execute("UPDATE sites SET published=NULL,published_at=NULL;")
+                self.execute(f"UPDATE sites SET artist_id={literal(selected)},published='{{\"legacy\":true}}',published_at='2026-01-01T00:00:00Z';")
+                # The selected artist was observed by the final API read. A legacy writer
+                # then changes it without advancing revision or the null evidence pointer.
+                self.execute(f"UPDATE sites SET artist_id={literal(current)};")
+                before = self.state()
+                with self.assertRaisesRegex(AssertionError, 'Publication conflict'):
+                    self.execute(self.publish_sql(row, expected_artist=selected))
+                self.assertEqual(self.state(), before)
+
+    def test_artist_selection_stable_and_null_match(self):
+        row = self.record()
+        for artist in [uid(3), None]:
+            self.execute(f"UPDATE sites SET artist_id={literal(artist)};")
+            before = json.loads(self.state())
+            self.execute(self.publish_sql(row, expected_pointer=before['published_evidence_id'], expected_artist=artist))
+            after = json.loads(self.state())
+            self.assertEqual(after['artist_id'], artist)
+            self.assertEqual(after['published'], candidate())
+            self.assertEqual(after['published_evidence_id'], row['id'])
+            self.assertEqual(after['revision'], 2)
+
+    def test_artist_writer_lock_serializes_publication_fence(self):
+        row = self.record()
+        self.execute(f"UPDATE sites SET artist_id='{uid(3)}',published='{{\"legacy\":true}}',published_at='2026-01-01T00:00:00Z';")
+        def change_artist():
+            return self.sql(f"SET application_name='sites-artist-change'; BEGIN; SET ROLE service_role; UPDATE sites SET artist_id='{uid(4)}'; SELECT pg_sleep(1.2); COMMIT;")
+        def publish():
+            return self.sql("SET application_name='sites-artist-publish'; SET ROLE service_role; " + self.publish_sql(row, expected_artist=uid(3)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(change_artist)
+            deadline = time.monotonic() + 5
+            while self.sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='sites-artist-change' AND wait_event='PgSleep';").stdout.strip() != '1':
+                if time.monotonic() > deadline:
+                    self.fail('Artist writer did not hold site lock')
+                time.sleep(0.02)
+            before = json.loads(self.state())
+            second = pool.submit(publish)
+            while self.sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='sites-artist-publish' AND cardinality(pg_blocking_pids(pid))>0;").stdout.strip() != '1':
+                if time.monotonic() > deadline:
+                    self.fail('Publisher did not wait behind artist writer')
+                time.sleep(0.02)
+            first.result(timeout=8)
+            with self.assertRaisesRegex(AssertionError, 'Publication conflict'):
+                second.result(timeout=8)
+        expected = {**before, 'artist_id': uid(4)}
+        self.assertEqual(json.loads(self.state()), expected)
 
     def test_nonspace_whitespace_is_not_explicit_override_reason(self):
         for reason in ['\t', '\n', '\u00a0', '\ufeff']:

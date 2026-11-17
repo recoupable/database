@@ -255,14 +255,14 @@ create trigger maintain_site_artist_evidence before update of artist_id on publi
  for each row execute function sites_evidence_proposal.guard_publication('artist');
 
 create function sites_evidence_proposal.publish_candidate(
- p_actor uuid,p_owner uuid,p_site uuid,p_revision integer,p_record uuid,p_candidate_sha text,p_expected_pointer uuid
+ p_actor uuid,p_owner uuid,p_site uuid,p_revision integer,p_record uuid,p_candidate_sha text,p_expected_pointer uuid,p_expected_artist_id uuid
 ) returns jsonb language plpgsql security definer set search_path='' as $$
 declare s public.sites; r sites_evidence_proposal.records;
 begin
  perform public.authorize_context_case_actor(p_actor,p_owner);
  select * into s from public.sites where id=p_site and owner_id=p_owner for update;
  if s.id is null then raise exception 'Site unavailable' using errcode='42501'; end if;
- if p_revision is null or s.revision<>p_revision or s.published_evidence_id is distinct from p_expected_pointer then raise exception 'Publication conflict' using errcode='40001'; end if;
+ if p_revision is null or s.revision<>p_revision or s.published_evidence_id is distinct from p_expected_pointer or s.artist_id is distinct from p_expected_artist_id then raise exception 'Publication conflict' using errcode='40001'; end if;
  select * into r from sites_evidence_proposal.records where id=p_record and site_id=p_site and owner_id=p_owner;
  if r.id is null or r.revision<>p_revision or p_candidate_sha is distinct from r.candidate_sha256 then raise exception 'Evidence conflict' using errcode='40001'; end if;
  if not coalesce(case r.decision->>'kind'
