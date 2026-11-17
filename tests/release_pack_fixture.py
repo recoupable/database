@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MIGRATION = '20261020150000_release_pack_jobs.sql'
+MIGRATION = '20261020154953_release_pack_jobs.sql'
 
 
 class ReleasePackFixture(unittest.TestCase):
