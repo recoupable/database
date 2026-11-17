@@ -1,0 +1,58 @@
+# Inactive Sites evidence proposal (#2094)
+
+**Draft technical proposal only.** All executable SQL stays here, outside `supabase/migrations`. No API/UI caller, database integration change, hosted apply/dry run, production grant, or gate activation is included. API #959's early-publish behavior remains unchanged. Root owns release and explicit override interaction decisions.
+
+Baseline: Database `7708e337feca212563bdfa48934a72227bcf1b63`; API #1260 merge `9fb18d854e927777886c5cd7ed1b2a165a9c669c`. Refreshed App main `630d3acae99d50186fa079814f0a2f94efdf7de5` still has an advisory `components/Sites/PublishSiteButton.tsx`; `SiteEditor.publishPreview` sends action/revision/return URL/optional generation token, not override intent. The earlier plan's App `9f3c3a` pin is historical, not the refreshed observation.
+
+## Proposed boundary
+
+One RLS-enabled private table, `sites_evidence_proposal.records`, retains immutable candidate/report or explicit-override records. One nullable `public.sites.published_evidence_id` identifies the record supporting the live snapshot. Existing publications start null. Two write transactions and one scoped read operate on the table:
+
+| Function | Inputs and result |
+| --- | --- |
+| `record_evidence` | Trusted authenticated actor, owner, site, current revision, operation key, complete candidate, candidate canonical text/digest, review or override decision, optional report canonical text. Returns the server-created ID/time and API1260 assessment record shape. |
+| `read_evidence` | Actor, owner, site, record ID. Rechecks current membership and existing site; returns that scoped immutable record, including historical revisions. A UUID is not authorization. |
+| `publish_candidate` | Actor, owner, site, expected draft revision, record ID, expected candidate digest and previously observed nullable publication pointer. Publishes only the stored candidate and updates pointer/time atomically. Keeps draft, draft revision and artist ID unchanged. |
+
+Actor identity is a trusted API forwarding obligation. SQL does not authenticate arbitrary UUID arguments. Each entry reuses the existing `authorize_context_case_actor` membership-lock primitive, matching current Sites personal/workspace membership semantics. Its use supplies a transaction-level membership check, not new commercial, creative or external-action authority. The future API must still perform all existing context, paid-workspace, artist/fan configuration and current-generation checks. Artist resolution/transitions are **not implemented here**; this proposal preserves the existing artist ID. A later adapter cannot treat this transaction as a replacement for those checks.
+
+The schema/function owner must be isolated from runtime roles. All function EXECUTE and table/column access are revoked from PUBLIC, anon, authenticated and service_role. No runtime role is created. `fixture-grants.sql` grants only schema USAGE and the three entry functions to the synthetic local service role; it is not a release grant. Entry functions are SECURITY DEFINER with empty search_path and qualified application/catalog relations. Internal validators and trigger functions remain non-callable to runtime roles. The disposable cluster owner is a PostgreSQL superuser: tests assert runtime ACL/ownership behavior, not resistance to an administrator who can alter objects or triggers.
+
+## Immutable records and retry semantics
+
+The database creates record UUID/time; neither can be supplied in decision JSON. An operation key is unique per site/workspace. A retry returns the original record only when actor, revision, full candidate, canonical bytes/digest and complete decision/report bytes match. Changed data conflicts. Different site/workspace keys are distinct namespaces after access checks. Site-row locking serializes competing captures. Every retry first checks current membership and revision: after draft advancement, old-key capture fails; scoped historical read can still return its original record. Do not automatically mint a new retry key after an unknown commit acknowledgment.
+
+Review and override decision envelopes reject unrelated fields, including claimed actor/time or human approval. Failed or malformed *object* reports can be retained with their actual digest but cannot publish as passed evidence. Nonobject reports and inconsistent digest envelopes are rejected at capture. An override requires the exact stored `publish-without-passed-review` intent and nonblank reason; publication requires the same authenticated actor. There is no implicit review-to-override fallback and no generic record TTL.
+
+`UPDATE` and direct `DELETE` of records are guarded, and runtime roles have no INSERT/UPDATE/DELETE/TRUNCATE/column privileges. Proposed retention is the lifetime of the site: an authorized explicit site deletion cascades only its records. This is a local technical proposal, not approved retention policy. Records cannot be moved to another site. A guarded owner transition is rejected whenever any evidence is retained for that site, including while unpublished; it cannot orphan an old workspace record or retain a foreign-workspace publication pointer. The owner guard is an additional non-callable SECURITY DEFINER trigger so runtime roles need no private-record SELECT grant. Existing service-role DELETE on sites remains a trusted destructive boundary, not proof of a human request. Service-role `TRUNCATE sites CASCADE` fails because it lacks TRUNCATE on the evidence table; cluster-owner fixture TRUNCATE remains privileged maintenance outside the runtime contract. Site deletion with a populated evidence pointer is exercised to qualify the FK cycle.
+
+## Digest and report boundary
+
+API `hashSiteEvidence` uses sorted JavaScript object keys plus JSON.stringify; PostgreSQL JSONB text is not equivalent. The adapter must provide those canonical UTF-8 strings. SQL checks that each string parses to the supplied candidate projection/report and that SHA-256 of the exact bytes matches its digest. Candidate projection excludes only `production.reviews` and `production.status`. The full immutable snapshot still includes both, and changing either conflicts on a retry key. SQL does not independently prove that supplied text is the unique JavaScript canonical form; producing it with the pinned helper semantics remains an adapter obligation.
+
+`api-digest-vectors.json` was generated using the actual pinned API helpers, including a Unicode-key/floating-number case. PostgreSQL tests persist those exact canonical strings and compare their real helper-produced digests. Report hashes and executed source/journey/runner digests are stored unchanged. No record-time code rewrites a review's evidence to match a new candidate.
+
+SQL rejects review publication unless necessary persisted conditions pass: pass verdict; no blocked state or blocking/direction issue; explicit generated-experience/not-recorded/not-tested metadata; well-formed digest fields and journey; exactly one successful mobile and desktop result, no errors/overflow; and complete passing opening review when supplied. Validators fail closed for malformed/null JSON, including direct SQL calls. These are **necessary structural checks**, not execution of the TypeScript renderer, proof that a model/browser ran, or full API policy replacement. The future trusted adapter must call `assessSitePublishEvidence` on the actual resolved candidate and same immutable record before publication to compare actual document, executed journey and current runner. Offline companion evidence exercised those actual API helpers with matching, source-drift and runner-drift fixtures; no browser/provider ran.
+
+Capture the fully assembled draft at the revision returned by final save. Generation claim and final draft save each advance revision; a fixture models both. Do not relabel an old report by adding one to its revision. Compute the new candidate binding while preserving original executed report digests, compare artifacts and reject drift. A working preview can differ within one revision and must retain signed account/site/current-generation validation in the future adapter. The database does not read Workflow history or authenticate a generation token.
+
+## Publication, legacy writers and concurrency
+
+The transaction locks membership, then the site, verifies revision/pointer/site/owner/record/digest and eligibility, and copies `records.candidate` into `sites.published`. It never accepts replacement JSON or reads a mutable latest draft. The pointer and publication timestamp commit together; any exception rolls back all writes. Draft revision is unchanged. Two publishers with the same observed pointer have one winner. A prior draft revision change rejects publication; a draft write waiting behind publication preserves the live snapshot/pointer afterward.
+
+The existing Sites table grants ALL to service_role, so an RPC alone is insufficient. Proposed row triggers reject direct runtime assignment of a nonnull evidence pointer and clear the pointer on legacy updates mentioning published/published_at/pointer, even a same-byte replacement. Artist-ID changes clear the pointer; draft-only updates, including an unchanged artist ID, preserve it. Unpublish clears published/published_at through the existing writer and the trigger clears its pointer. INSERT cannot forge a pointer. The schema owner is the trusted definer identity; a caller-controlled GUC is never authority.
+
+A null pointer cannot order two legacy publications or detect an evidence-pointer ABA caused by unpublish/republication. This proposal does not claim that guarantee or add another version column. Same-revision evidence-based publication CAS is tested against a stable observed pointer; broader intent sequencing would require a separate accepted concurrency contract. Existing advisory operations are not disabled. Future activation must reconcile legacy writers/old deployments rather than silently treating null pointers as approval.
+
+## Local qualification and remaining release work
+
+Run with one PostgreSQL installation on PATH, or `PG_BIN`:
+
+```sh
+PG_BIN=/path/to/postgresql-15/bin python3 proposals/sites-publish-evidence-2094/test_contract.py
+PG_BIN=/path/to/postgresql-17/bin python3 proposals/sites-publish-evidence-2094/test_contract.py
+```
+
+The suite reuses `tests/test_release_cases.py`'s disposable Unix-socket-only cluster and actual prerequisite Context SQL, then applies the actual Sites baseline and this proposal. Synthetic legacy tables supply only required historical prerequisites; this is not a full migration replay. It uses no hosted DSN, real credentials, Storage, provider calls or production data. It also runs the inherited release-case prerequisite test. Broad Supabase-shaped default grants are deliberately installed before the proposal, then table/column/internal-function ACLs are checked.
+
+The proposal requires separate release assessment of owner/grants, dependencies, legacy writer compatibility, retention and actor forwarding before any migration is authored or applied. API capture/read/publication adapters, exact-candidate preview selection and explicit override interaction remain later and unwired. The current Publish click must not become a fabricated override. No mandatory artist approval, source collector, paid repair loop, screenshot store or native qualification is added. This does not complete all of #2094 or #2345.
