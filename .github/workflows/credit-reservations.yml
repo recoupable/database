@@ -30,3 +30,4 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
           python3 -m unittest discover -s tests -p 'test_credit_reservations.py'
+          python3 -m unittest discover -s tests -p 'test_credit_reservation_composition.py'
