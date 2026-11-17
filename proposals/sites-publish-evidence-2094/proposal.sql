@@ -136,6 +136,19 @@ begin
 exception when others then return false;
 end $$;
 
+-- Match ECMAScript trim whitespace for the API's explicit nonblank reason contract.
+create function sites_evidence_proposal.explicit_override(p_decision jsonb) returns boolean
+language plpgsql immutable set search_path='' as $$
+begin
+ return coalesce(jsonb_typeof(p_decision)='object'
+  and p_decision - array['kind','intent','reason']='{}'::jsonb
+  and p_decision->>'kind'='override'
+  and p_decision->>'intent'='publish-without-passed-review'
+  and jsonb_typeof(p_decision->'reason')='string'
+  and length(btrim(p_decision->>'reason', U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF')) between 1 and 2000,false);
+exception when others then return false;
+end $$;
+
 create function sites_evidence_proposal.record_json(r sites_evidence_proposal.records) returns jsonb
 language sql stable set search_path='' as $$
  select jsonb_build_object('id',r.id,'siteId',r.site_id,'ownerId',r.owner_id,'revision',r.revision,
@@ -174,10 +187,8 @@ begin
    or (p_decision->>'reviewSha256') !~ '^[a-f0-9]{64}$'
    or encode(sha256(convert_to(p_review_canonical,'UTF8')),'hex')<>p_decision->>'reviewSha256' then raise exception 'Report digest mismatch'; end if;
  elsif p_decision->>'kind'='override' then
-  if p_decision - array['kind','intent','reason'] <> '{}'::jsonb or p_review_canonical is not null
-   or p_decision->>'intent' is distinct from 'publish-without-passed-review'
-   or jsonb_typeof(p_decision->'reason') is distinct from 'string'
-   or length(btrim(p_decision->>'reason')) not between 1 and 2000 then raise exception 'Explicit override required'; end if;
+  if p_review_canonical is not null or not sites_evidence_proposal.explicit_override(p_decision)
+   then raise exception 'Explicit override required'; end if;
  else raise exception 'Invalid decision kind'; end if;
  select * into r from sites_evidence_proposal.records where site_id=p_site and owner_id=p_owner and operation_key=p_key;
  if r.id is not null then
@@ -254,8 +265,10 @@ begin
  if p_revision is null or s.revision<>p_revision or s.published_evidence_id is distinct from p_expected_pointer then raise exception 'Publication conflict' using errcode='40001'; end if;
  select * into r from sites_evidence_proposal.records where id=p_record and site_id=p_site and owner_id=p_owner;
  if r.id is null or r.revision<>p_revision or p_candidate_sha is distinct from r.candidate_sha256 then raise exception 'Evidence conflict' using errcode='40001'; end if;
- if (r.decision->>'kind'='review' and not sites_evidence_proposal.review_passes(r.decision->'review'))
-  or (r.decision->>'kind'='override' and r.recorded_by_account_id<>p_actor) then raise exception 'Evidence not eligible' using errcode='42501'; end if;
+ if not coalesce(case r.decision->>'kind'
+  when 'review' then sites_evidence_proposal.review_passes(r.decision->'review')
+  when 'override' then sites_evidence_proposal.explicit_override(r.decision) and r.recorded_by_account_id=p_actor
+  else false end,false) then raise exception 'Evidence not eligible' using errcode='42501'; end if;
  update public.sites set published=r.candidate,published_evidence_id=r.id,published_at=clock_timestamp(),updated_at=clock_timestamp()
  where id=p_site returning * into s;
  return jsonb_build_object('site',to_jsonb(s),'evidence',sites_evidence_proposal.record_json(r),'humanApproval','not-recorded');

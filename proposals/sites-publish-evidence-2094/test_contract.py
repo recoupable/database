@@ -82,12 +82,12 @@ class SitesEvidence(harness.ReleaseCases):
     def execute(self, statement, role='service_role'):
         return '\n'.join(line for line in self.sql(f'SET ROLE {role}; ' + statement).stdout.strip().splitlines() if line != 'SET')
 
-    def record_sql(self, key='capture', actor=2, owner=1, revision=2, value=None, review=None, override=False, candidate_hash=None, report_hash=None):
+    def record_sql(self, key='capture', actor=2, owner=1, revision=2, value=None, review=None, override=False, candidate_hash=None, report_hash=None, override_reason='Explicit synthetic choice'):
         value = candidate() if value is None else value
         ctext = canonical(projection(value))
         r = report() if review is None else review
         rtext = None if override else canonical(r)
-        decision = {'kind': 'override', 'intent': 'publish-without-passed-review', 'reason': 'Explicit synthetic choice'} if override else {
+        decision = {'kind': 'override', 'intent': 'publish-without-passed-review', 'reason': override_reason} if override else {
             'kind': 'review', 'review': r, 'reviewSha256': report_hash or digest(rtext)}
         args = [uid(actor), uid(owner), uid(10), revision, key, json.dumps(value), ctext,
                 candidate_hash or digest(ctext), json.dumps(decision), rtext]
@@ -441,6 +441,24 @@ class SitesEvidence(harness.ReleaseCases):
             with self.assertRaisesRegex(AssertionError, 'Evidence owner'):
                 self.execute(f"UPDATE sites SET owner_id='{uid(4)}';")
             self.assertEqual(self.state(), before)
+
+    def test_nonspace_whitespace_is_not_explicit_override_reason(self):
+        for reason in ['\t', '\n', '\u00a0', '\ufeff']:
+            with self.subTest(reason=repr(reason)):
+                with self.assertRaisesRegex(AssertionError, 'Explicit override required'):
+                    self.record(key=f'blank-{ord(reason)}', override=True, override_reason=reason)
+
+    def test_corrupt_record_kind_is_not_eligible_for_direct_publication(self):
+        row = self.record()
+        # Privileged fixture-only corrupt seed stresses the publisher independently of its writer.
+        self.sql(f"""INSERT INTO sites_evidence_proposal.records(id,site_id,owner_id,revision,operation_key,
+          recorded_by_account_id,candidate,candidate_canonical,candidate_sha256,decision,review_canonical)
+          SELECT '{uid(90)}',site_id,owner_id,revision,'corrupt',recorded_by_account_id,candidate,
+          candidate_canonical,candidate_sha256,'{{"kind":"unknown"}}',NULL FROM sites_evidence_proposal.records;""")
+        before = self.state()
+        with self.assertRaisesRegex(AssertionError, 'not eligible'):
+            self.execute(self.publish_sql({**row, 'id': uid(90)}))
+        self.assertEqual(self.state(), before)
 
 
 if __name__ == '__main__':
