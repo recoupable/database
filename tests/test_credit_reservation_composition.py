@@ -4,6 +4,7 @@ import json
 import subprocess
 import uuid
 from credit_charge_fixture import CreditChargeFixture, ROOT
+from release_pack_fixture import MIGRATION as PACK_MIGRATION
 
 
 class CreditReservationComposition(CreditChargeFixture):
@@ -15,7 +16,7 @@ class CreditReservationComposition(CreditChargeFixture):
           ALTER TABLE public.credits_usage ADD COLUMN timestamp timestamp DEFAULT now();''')
         # Replay the owning migrations in deployment order, not rewritten model functions.
         for name in ['20261010210500_credit_reservations.sql',
-                     '20261020150000_release_pack_jobs.sql',
+                     PACK_MIGRATION,
                      '20261117000000_compose_credit_reservations.sql']:
             cls.sql((ROOT / 'supabase/migrations' / name).read_text())
 
