@@ -1,0 +1,63 @@
+{
+  "database_commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+  "api_commit": "ec284cba127d73d0c3e7e74deceabac5c6a145f1",
+  "database_files": [
+    {
+      "commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+      "path": "proposals/application-registration-2104/parents.sql",
+      "sha256": "2a1096eadf1ee947f2b1d6bb88f5750e26436ee8ea82ae1f306a279da8b41c2d"
+    },
+    {
+      "commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+      "path": "proposals/application-registration-2104/registration.sql",
+      "sha256": "3377dd6f86bdf3052a2dd00b66380540764e07a763003f6a1c46192c336e6409"
+    },
+    {
+      "commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+      "path": "proposals/application-registration-2104/test_registration.py",
+      "sha256": "4051b2581646cea5ac2d36a23d5d5e6271dd02cbf0997e0792623289914d230c"
+    },
+    {
+      "commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+      "path": "proposals/application-registration-2104/qualification-bootstrap.sql",
+      "sha256": "6c318540735e46c8ace40cd686bf7cc1851fb3296b5a123d29e287f94be35c05"
+    },
+    {
+      "commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+      "path": "proposals/application-registration-2104/PARENT-CONTRACT.md",
+      "sha256": "f08c2ed9438dc36bca06d2f0e687d283af5d68d0022d6320254b4b7267dea198"
+    }
+  ],
+  "api_provenance": [
+    {
+      "commit": "ec284cba127d73d0c3e7e74deceabac5c6a145f1",
+      "path": "lib/applications/proposedRegistration/proposedRegistrationContract.ts",
+      "sha256": "0162487073c4e70dfc88179a49d6577980dcbb8a945e0a3778498e00f307b6e8"
+    },
+    {
+      "commit": "ec284cba127d73d0c3e7e74deceabac5c6a145f1",
+      "path": "lib/applications/proposedRegistration/createProposedApplicationRegistration.ts",
+      "sha256": "0322dfd63e51314cfe7bcc5d5544127291574f3c1c8152fb536a3e1c6e4afef0"
+    },
+    {
+      "commit": "ec284cba127d73d0c3e7e74deceabac5c6a145f1",
+      "path": "lib/applications/proposedRegistration/readProposedApplicationRegistration.ts",
+      "sha256": "ca358e8de64b51550f9be50f55d9189a665ca1a38d722a7850f1d31be43ae134"
+    },
+    {
+      "commit": "ec284cba127d73d0c3e7e74deceabac5c6a145f1",
+      "path": "docs/internal/mcp-existing-application-actor.md",
+      "sha256": "587eb80f223839a757becb865cdb8aef26c8c7905e75aadd453e46fe0454bc84"
+    }
+  ],
+  "supervisor": "proposals/application-registration-2104/test_registration.py",
+  "loaded_sql": [
+    "proposals/application-registration-2104/qualification-bootstrap.sql",
+    "proposals/application-registration-2104/parents.sql",
+    "proposals/application-registration-2104/registration.sql"
+  ],
+  "plan_seal": "852a8ff829bfc9b9a426ee32382435bede1cabd30ed8b3297e6c6eef7c0da4d7",
+  "decision_seal": "076754718f7aaa10278a322ef448fe0dff33fdc214b85634cb97554a30b14765",
+  "oauth_plan_review_seal": "2c0bc1a0b08ce84218e2593edb9831e649b68bdb9b4931f0fccd1eb888905828",
+  "activation": false
+}
