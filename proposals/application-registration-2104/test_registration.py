@@ -33,7 +33,7 @@ class Registration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.socket, cls.bin = verify_worker_lease()
-        clean_env = {k:v for k,v in os.environ.items() if not k.startswith('PG')}
+        clean_env = fixture_environment(Path(cls.socket).parent, cls.bin)
         cls.env = {**clean_env, 'PGHOST': cls.socket, 'PGPORT': '55473', 'PGDATABASE': 'postgres',
                    'PGOPTIONS': '-c statement_timeout=10000 -c lock_timeout=8000'}
         for filename in ['qualification-bootstrap.sql', 'parents.sql', 'registration.sql']:
@@ -169,8 +169,38 @@ class Registration(unittest.TestCase):
         self.deny('SET ROLE qualification_browser;' + self.statement(), 'permission denied')
         self.deny(f"SET ROLE qualification_browser; SELECT {S}.authorize_create('{A}','{A}','production');", 'permission denied')
 
+    def test_database_encoding_is_utf8(self):
+        self.assertEqual(self.sql('SHOW server_encoding'), 'UTF8')
+        self.assertEqual(self.create(body={**payload(), 'name': 'Música 音楽'})['snapshot']['name'], 'Música 音楽')
+
+    def test_minimal_owned_environment_drops_synthetic_poison(self):
+        from unittest.mock import patch
+        socket = Path(self.socket)
+        poison = {key: 'synthetic-poison-do-not-forward' for key in [
+            'UNRELATED_SERVICE_SECRET', 'PGSERVICE', 'PGSERVICEFILE', 'PGPASSWORD',
+            'PGPASSFILE', 'PGHOSTADDR', 'PYTHONPATH', 'PYTHONHOME', 'LD_PRELOAD',
+            'DYLD_INSERT_LIBRARIES', 'NODE_OPTIONS', 'ENV', 'BASH_ENV']}
+        with patch.dict(os.environ, poison):
+            clean = fixture_environment(socket.parent, self.bin)
+        self.assertTrue(set(poison).isdisjoint(clean))
+        self.assertTrue(set(poison).isdisjoint(os.environ))
+        self.assertEqual(clean['HOME'], str(socket.parent/'home'))
+        self.assertEqual(clean['TMPDIR'], str(socket.parent/'tmp'))
+        self.assertEqual(os.environ['HOME'], clean['HOME'])
+        self.assertEqual(self.env['HOME'], clean['HOME'])
+        self.assertEqual(self.env['PGHOST'], self.socket)
+        self.assertEqual(set(self.env)-set(clean), {'PGHOST','PGPORT','PGDATABASE','PGOPTIONS'})
+        probe = subprocess.run([str(Path(sys.executable).resolve()), '-I', '-c',
+            'import json,os; print(json.dumps(dict(os.environ),sort_keys=True))'],
+            env=clean, capture_output=True, text=True, check=True, timeout=5)
+        actual = json.loads(probe.stdout)
+        # macOS CoreFoundation may synthesize this runtime encoding entry after exec.
+        self.assertLessEqual(set(actual)-set(clean), {'__CF_USER_TEXT_ENCODING'})
+        self.assertTrue(set(poison).isdisjoint(actual))
+        self.assertEqual({key: actual[key] for key in clean}, clean)
+
     def test_direct_remote_worker_target_rejected_before_sql(self):
-        r = subprocess.run([sys.executable, str(Path(__file__).resolve()), '--worker'],
+        r = subprocess.run([str(Path(sys.executable).resolve()), '-I', str(Path(__file__).resolve()), '--worker'],
             env={**os.environ, 'REGISTRATION_QUALIFICATION_SOCKET': 'example.invalid', 'PGPASSWORD': 'synthetic-unusable'},
             capture_output=True, text=True, timeout=5)
         self.assertNotEqual(r.returncode, 0)
@@ -271,6 +301,39 @@ class Registration(unittest.TestCase):
         self.assertEqual(self.sql(f'SELECT count(*) FROM {S}.applications'), '0')
 
 
+def fixture_environment(root, pg_bin, fault=None):
+    """Allowlist only owned paths and fixed controls; never copy ambient values."""
+    metadata = json.loads((root/'fixture-owner.json').read_text())
+    socket = Path(metadata['socket'])
+    if not root.is_absolute() or root.resolve() != root or socket.parent != root:
+        raise RuntimeError('Owned absolute fixture root required')
+    for directory in [root/'home', root/'tmp']:
+        if directory.is_symlink() or not directory.is_dir() or directory.stat().st_uid != os.getuid():
+            raise RuntimeError('Owned fixture home/tmp directory required')
+    if fault not in (None, 'signal', 'timeout', 'worker-exit'):
+        raise RuntimeError('Unknown qualification fault')
+    env = {'HOME': str(root/'home'), 'TMPDIR': str(root/'tmp'),
+           'PATH': os.pathsep.join([str(pg_bin), str(Path(sys.executable).resolve().parent), '/usr/bin', '/bin']),
+           'LANG': 'C', 'LC_ALL': 'C', 'TZ': 'UTC',
+           'REGISTRATION_QUALIFICATION_BIN': str(pg_bin),
+           'REGISTRATION_QUALIFICATION_SOCKET': str(socket)}
+    if fault is not None: env['REGISTRATION_QUALIFICATION_FAULT'] = fault
+    return env
+
+
+def prepare_worker_environment():
+    """Scrub before even lease-check subprocesses; then validate the registered owner."""
+    socket = Path(os.environ['REGISTRATION_QUALIFICATION_SOCKET'])
+    if not socket.is_absolute() or socket.is_symlink() or socket.resolve() != socket:
+        raise RuntimeError('Owned absolute Unix socket directory required')
+    pg_bin = Path(os.environ['REGISTRATION_QUALIFICATION_BIN'])
+    fault = os.environ.get('REGISTRATION_QUALIFICATION_FAULT')
+    env = fixture_environment(socket.parent, pg_bin, fault)
+    os.environ.clear()
+    os.environ.update(env)
+    return verify_worker_lease()
+
+
 def verify_worker_lease():
     """Reject direct/remote worker targets before any SQL or environment forwarding."""
     import stat
@@ -303,20 +366,24 @@ def interrupted(_signum, _frame):
 def supervise():
     """Own one random cluster; stop only after exact directory/process identity checks."""
     pg_bin = Path(os.environ.get('PG_BIN', '/opt/homebrew/opt/postgresql@15/bin')).resolve()
+    fault = os.environ.get('REGISTRATION_QUALIFICATION_FAULT')
     root = Path(tempfile.mkdtemp(prefix='registration-qual-', dir='/private/tmp' if Path('/private/tmp').exists() else '/tmp')).resolve()
     socket = Path(tempfile.mkdtemp(prefix='recoup-cases-', dir=root)).resolve()
     cluster = socket / 'pg'; info = socket.stat()
     (root/'fixture-owner.json').write_text(json.dumps({'socket': str(socket), 'cluster': str(cluster),
         'uid': info.st_uid, 'device': info.st_dev, 'inode': info.st_ino, 'worker_pid': os.getpid(), 'pg_bin': str(pg_bin)}))
-    env = {k:v for k,v in os.environ.items() if not k.startswith('PG')}
-    env.update({'REGISTRATION_QUALIFICATION_BIN': str(pg_bin), 'REGISTRATION_QUALIFICATION_SOCKET': str(socket)})
+    (root/'home').mkdir(mode=0o700)
+    (root/'tmp').mkdir(mode=0o700)
+    env = fixture_environment(root, pg_bin, fault)
+    os.environ.clear()
+    os.environ.update(env)
     worker = None
     old_handlers = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
-        subprocess.run([str(pg_bin/'initdb'), '-D', str(cluster), '-A', 'trust'], env=env, check=True, capture_output=True, timeout=30)
+        subprocess.run([str(pg_bin/'initdb'), '-D', str(cluster), '-A', 'trust', '-E', 'UTF8'], env=env, check=True, capture_output=True, timeout=30)
         subprocess.run([str(pg_bin/'pg_ctl'), '-D', str(cluster), '-l', str(root/'postgres.log'), '-w', '-t', '10',
                         '-o', f"-k {socket} -p 55473 -c listen_addresses=''", 'start'], env=env, check=True, capture_output=True, timeout=15)
-        worker = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--worker'], env=env, start_new_session=True)
+        worker = subprocess.Popen([str(Path(sys.executable).resolve()), '-I', str(Path(__file__).resolve()), '--worker'], env=env, start_new_session=True)
         if env.get('REGISTRATION_QUALIFICATION_FAULT') == 'signal':
             os.kill(os.getpid(), signal.SIGTERM)
         return worker.wait(timeout=.3 if env.get('REGISTRATION_QUALIFICATION_FAULT') == 'timeout' else 120)
@@ -463,11 +530,11 @@ def quiesce_worker(worker):
 
 if __name__ == '__main__':
     if sys.argv[1:] == ['--worker']:
-        socket, pg_bin = verify_worker_lease()
+        socket, pg_bin = prepare_worker_environment()
         fault = os.environ.get('REGISTRATION_QUALIFICATION_FAULT')
         if fault == 'timeout': time.sleep(30)
         if fault == 'worker-exit':
-            subprocess.Popen([str(pg_bin/'psql'), '-XqAt', '-h', socket, '-p', '55473', '-d', 'postgres', '-c', 'SELECT pg_sleep(30)'], env={k:v for k,v in os.environ.items() if not k.startswith('PG')})
+            subprocess.Popen([str(pg_bin/'psql'), '-XqAt', '-h', socket, '-p', '55473', '-d', 'postgres', '-c', 'SELECT pg_sleep(30)'], env=fixture_environment(Path(socket).parent, pg_bin))
             time.sleep(.1)
             raise SystemExit(86)
         unittest.main(argv=[sys.argv[0]], verbosity=2)

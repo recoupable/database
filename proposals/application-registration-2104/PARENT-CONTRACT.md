@@ -175,7 +175,18 @@ starts Unix-socket-only PostgreSQL, launches a dedicated worker process group, a
 stops/removes only that verified lease. No hosted connection string is accepted.
 The internal worker verifies absolute local socket path, UID/device/inode, parent PID,
 registered binary directory and postmaster identity **before SQL**; connection-related
-PG variables are stripped. The marker/lease is an accidental-target guard, not an OS
+variables are constructed from an allowlist, not copied from the ambient environment.
+HOME/TMPDIR point to owned fixture directories; PATH contains only resolved PostgreSQL/
+Python directories and system binaries; LANG/LC_ALL/TZ are fixed. `initdb -E UTF8`
+preserves Unicode/JSON semantics despite the C locale; qualification asserts server
+encoding and a Unicode registration round trip. Only the explicit
+socket/binary/validated fault controls accompany them. Worker SQL receives fixed
+PGHOST/PORT/DATABASE/OPTIONS and an explicit application name. The supervisor clears
+its inherited environment before launching any fixture or cleanup subprocess; workers
+launch with isolated Python (-I) and scrub again before lease-check subprocesses.
+Synthetic poison tests verify unrelated service, libpq service/password and loader/
+Python variables are absent from actual child environments. No real credential values
+or home credential files are inspected. The marker/lease is an accidental-target guard, not an OS
 security boundary against a malicious local owner who can edit the runner itself.
 
 SQL, process startup, worker duration and cleanup have bounded waits. Scoped SIGTERM/
