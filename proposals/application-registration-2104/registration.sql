@@ -57,11 +57,11 @@ BEGIN
  SELECT q.* INTO prior FROM application_registration_proposal.requests q
  WHERE q.actor=p_actor AND q.workspace_id=p_workspace AND q.key=p_key;
  IF FOUND THEN
-  IF prior.input IS DISTINCT FROM fingerprint THEN RAISE EXCEPTION 'idempotency conflict'; END IF;
+  IF prior.input IS DISTINCT FROM fingerprint THEN RAISE EXCEPTION 'idempotency conflict' USING ERRCODE='P2101'; END IF;
   SELECT r.result INTO result_value FROM application_registration_proposal.receipts r WHERE r.id=prior.receipt_id;
   RETURN result_value;
  END IF;
- IF authority.revision<>p_entitlement_revision THEN RAISE EXCEPTION 'entitlement revision conflict'; END IF;
+ IF authority.revision<>p_entitlement_revision THEN RAISE EXCEPTION 'entitlement revision conflict' USING ERRCODE='P2101'; END IF;
  IF NOT(p_registration ?& ARRAY['name','origins']) OR p_registration-ARRAY['name','origins']<>'{}'::jsonb
  OR jsonb_typeof(p_registration->'name')<>'string' OR length(p_registration->>'name') NOT BETWEEN 1 AND 120
  OR btrim(p_registration->>'name')<>p_registration->>'name'

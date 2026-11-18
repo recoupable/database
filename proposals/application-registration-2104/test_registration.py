@@ -90,6 +90,59 @@ class Registration(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, message):
             self.sql(sql)
 
+    def assert_sqlstate(self, statement, expected):
+        # Catch only inside a test subtransaction; compare structured diagnostics,
+        # never PostgreSQL's localized message text. Success must also fail.
+        command = statement.rstrip().removesuffix(';')
+        self.sql(f"""DO $assert_state$ DECLARE observed text;
+        BEGIN
+          BEGIN
+            EXECUTE {quote(command)};
+          EXCEPTION WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS observed = RETURNED_SQLSTATE;
+          END;
+          IF observed IS DISTINCT FROM {quote(expected)} THEN
+            RAISE EXCEPTION 'Expected SQLSTATE %, observed %', {quote(expected)}, coalesce(observed, 'SUCCESS');
+          END IF;
+        END $assert_state$;""")
+
+    def registration_state(self):
+        return {table: self.sql(f"SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM {S}.{table} t")
+                for table in ['applications', 'environments', 'origins', 'receipts', 'requests']}
+
+    def test_structured_conflicts_preserve_history_and_authority_precedence(self):
+        empty = self.registration_state()
+        with self.subTest(conflict='new-key-stale-revision'):
+            self.assert_sqlstate(self.statement(rev=2), 'P2101')
+            self.assertEqual(self.registration_state(), empty)
+        original = self.create()
+        saved = self.registration_state()
+        changed = [{'rev': 2}, {'body': {**payload(), 'name': 'Changed'}}, {'env': 'development'}]
+        for kw in changed:
+            with self.subTest(conflict=kw):
+                self.assert_sqlstate(self.statement(**kw), 'P2101')
+                self.assertEqual(self.registration_state(), saved)
+        self.sql(f"UPDATE {S}.create_entitlements SET revision=2 WHERE actor='{A}'")
+        self.assertEqual(self.create(), original)
+        with self.subTest(conflict='advanced-revision-new-key'):
+            self.assert_sqlstate(self.statement(key='new'), 'P2101')
+            self.assertEqual(self.registration_state(), saved)
+        for mutation in [f"UPDATE {S}.create_entitlements SET enabled=false WHERE actor='{A}'",
+                         f"DELETE FROM {S}.create_entitlements WHERE actor='{A}'"]:
+            self.sql(mutation)
+            for kw in [{}] + changed + [{'key': 'new'}]:
+                self.assert_sqlstate(self.statement(**kw), '42501')
+                self.assertEqual(self.registration_state(), saved)
+
+    def test_structured_nonconflict_errors_are_not_conflicts(self):
+        saved = self.registration_state()
+        for kw in [{'env': 'staging'}, {'body': {}}, {'body': {**payload(), 'name': ''}}]:
+            self.assert_sqlstate(self.statement(**kw), 'P0001')
+            self.assertEqual(self.registration_state(), saved)
+        self.assert_sqlstate("DO $$ BEGIN RAISE EXCEPTION 'idempotency conflict'; END $$", 'P0001')
+        self.assert_sqlstate(self.statement(actor=B), '42501')
+        self.assertEqual(self.registration_state(), saved)
+
     def grant_management(self, app, ops, actor=A, env='production'):
         self.sql(f"INSERT INTO {S}.management_entitlements(actor,workspace_id,application_id,environment,operation) "
                  f"SELECT '{actor}','{actor}',{quote(app)},{quote(env)},op FROM unnest(ARRAY[" +

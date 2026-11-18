@@ -143,6 +143,32 @@ key and payload, never an automatic new key. Rollback restores every partial ins
 Receipt/retry UPDATE and DELETE are blocked; retention, purge, export and tombstone
 lifetime remain unadopted. Fixture truncation is teardown only.
 
+## Definite registration conflict errors
+
+`register_application` reserves SQLSTATE `P2101` (`application_registration_conflict`)
+for exactly two definite failures: an existing retry key with a different fingerprint,
+and a new request whose expected entitlement revision differs from current authority.
+Both map to the same proposed domain `conflict` kind; human diagnostic text is not a
+classification contract. No other input, structural, transaction or transport failure
+may be inferred to be a conflict from its message or SQLSTATE class. `42501` remains
+the authority-denied code. Other unclassified errors remain unknown to the adapter.
+This is an inactive storage contract, not an adopted public HTTP/MCP error mapping.
+
+Current authority checks and expiry rechecks still precede retry lookup. Valid but
+conflicting input cannot disclose history after authority is denied. The conflict
+raises remain before inserts and abort the failed operation; they neither alter the
+original receipt nor imply that an earlier request did not commit. Exact authorized
+replay still returns original history after an enabled entitlement revision advances;
+a new key must match the current revision. Unknown transport outcomes still require
+retaining the original operation/key/input, with no automatic retry or new ledger.
+The code annotations change no locks, transaction boundaries, receipt flags or policy.
+
+The SQLSTATE tests compare `RETURNED_SQLSTATE` inside a disposable test subtransaction,
+not localized error text. They cover both conflict sites, all fingerprint dimensions,
+unchanged contents of all five registration tables, original-receipt replay, authority
+precedence, and generic validation errors that remain `P0001`. A generic exception
+whose message says idempotency conflict still has `P0001`.
+
 ## Outputs and privilege boundary
 
 Every registration receipt includes actor, workspace, fixed billing owner, generated
