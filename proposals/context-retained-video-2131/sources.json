@@ -1,0 +1,342 @@
+{
+  "sources": [
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260920010000_context_foundation.sql",
+      "sha256": "e298767479bf60f460dc78f12fe7cade571582bcc808f8e305e61fde72803fe9"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260920020000_context_spotify_pipeline.sql",
+      "sha256": "85975e5bbcf31356ca784aadca6fb24fe577c4a4cf0e534833d192951504f227"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260920030000_context_enrichment_pilot.sql",
+      "sha256": "888eed1c508d5d129880bbd1f974af4af2ebbbee8327e8e27d876af48df2281c"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260923070000_context_enrichment_scope.sql",
+      "sha256": "4f591cac6073b7068ffc5b4766aa88022958d19d7274adc9458eef6633ade1dd"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260927090000_context_audio_source.sql",
+      "sha256": "7bd9fbf2e12a4d3f656fa943c5ad9339e24226605ddcdf0502d898afb654d57e"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20261008160000_context_release_cases.sql",
+      "sha256": "095692a2d01d079993114a8b9c2acd0433ccc31efe9b8280ab18908631ac1884"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20261008030000_onboarding_membership_lock_privilege.sql",
+      "sha256": "6d6ff0bd683516b7fc5a15c26fd9998f48d44a7a1bddf1ebaf5f27136512f7d3"
+    },
+    {
+      "repository": "database",
+      "commit": "23262f99d2a6c010f00c459a4b1814d6623c3843",
+      "path": "supabase/migrations/20261010213100_context_video_entry.sql",
+      "sha256": "7812f0020f8c3690ed391012f97ea105984157f3c14275939da3472bd1914d20"
+    },
+    {
+      "repository": "database",
+      "commit": "23262f99d2a6c010f00c459a4b1814d6623c3843",
+      "path": "tests/test_context_video_entry.py",
+      "sha256": "7663dcc360ca1d44c7226ac09df2b85485112cf2cbe6a1dc6c4de7216df78701"
+    },
+    {
+      "repository": "api",
+      "commit": "21d9971c9e6152cf11fedbe8de0402e1fc806591",
+      "path": "lib/context/video/contextVideoEvidenceSchema.ts",
+      "sha256": "e768b61775cd2a96124e65bc2d0536f52805ea6b22aa7210043a7256e00c19cd"
+    },
+    {
+      "repository": "api",
+      "commit": "21d9971c9e6152cf11fedbe8de0402e1fc806591",
+      "path": "lib/context/video/contextVideoLimits.ts",
+      "sha256": "fd6437cd6dca9068a9db9df1e6e7b1d6b7c8e484de6f3319224fb87a27a00a2a"
+    },
+    {
+      "repository": "api",
+      "commit": "21d9971c9e6152cf11fedbe8de0402e1fc806591",
+      "path": "lib/context/video/projectContextVideoEvidence.ts",
+      "sha256": "eda595f8d82f522e001f43170ea02412f2d8a1ef7efc3395607e79a02f1d63ff"
+    },
+    {
+      "repository": "api",
+      "commit": "21d9971c9e6152cf11fedbe8de0402e1fc806591",
+      "path": "lib/context/accounting/README.md",
+      "sha256": "680ede7fb7e3f5361dbee17a88333b631cbdcc3bd884608823bec0a658965f31"
+    },
+    {
+      "repository": "api",
+      "commit": "21d9971c9e6152cf11fedbe8de0402e1fc806591",
+      "path": "lib/context/enrichment/runContextEnrichment.ts",
+      "sha256": "4bb6380d20e89a566ad73b233fc30113bee06aea314f152e196a3bdf17acea5d"
+    },
+    {
+      "repository": "api",
+      "commit": "21d9971c9e6152cf11fedbe8de0402e1fc806591",
+      "path": "lib/context/planning/planStoredContextModules.ts",
+      "sha256": "4b227dbde6421e28f281be312fd8fb26046cf1d7b05e19e0afe35d44cc6acc2d"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260922070000_context_catalog_entry.sql",
+      "sha256": "1e37dcabd4a594a1d14920ee76410efd9fecbd622054c343cad113186b93b828"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260924040000_context_release_entry.sql",
+      "sha256": "7925253d7eb10ffe417e35cca609344fffbb501ec4a7cdb44a9d9ac13891ab4b"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260925100000_context_songwriter_name_entry.sql",
+      "sha256": "118c08ccb5be7f78759d587740d8db029f5cf83ba8325e7abd7df75528e0eb68"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260925110000_context_company_name_entry.sql",
+      "sha256": "cbab76d87271f38d8e6f2af88fce756095c3b580590e05b619cd50b5b7f8cf5e"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260925120000_context_campaign_brief_entry.sql",
+      "sha256": "42471a3b3fc97bb98fdacbb8fd76df91b3b9a89f9e29164017246d156defffb8"
+    },
+    {
+      "repository": "database",
+      "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+      "path": "supabase/migrations/20260925130000_context_supporting_text_entry.sql",
+      "sha256": "12d2d5749be9d7d793bee97b50fdc46d6329cb7586a1926c838a774ba2d1dfa6"
+    },
+    {
+      "repository": "database",
+      "commit": "23262f99d2a6c010f00c459a4b1814d6623c3843",
+      "path": "supabase/tests/context_video_entry.sql",
+      "sha256": "a1259858c736e2d0487374ad4492503c6cd1743c45f8edf1f21c20dc063726eb"
+    },
+    {
+      "repository": "database",
+      "commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+      "path": "proposals/application-registration-2104/test_registration.py",
+      "sha256": "4051b2581646cea5ac2d36a23d5d5e6271dd02cbf0997e0792623289914d230c"
+    }
+  ],
+  "qualification": {
+    "status": "owned_local_qualification_recipe",
+    "prefix": [
+      {
+        "path": "proposals/context-retained-video-2131/qualification-bootstrap.sql",
+        "sha256": "d2c3be8318d3b5b975ed03098c83a082f29aefe8a84b649e505a9f1784888b58"
+      }
+    ],
+    "normal_prerequisites": [
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260920010000_context_foundation.sql",
+        "sha256": "e298767479bf60f460dc78f12fe7cade571582bcc808f8e305e61fde72803fe9"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260920020000_context_spotify_pipeline.sql",
+        "sha256": "85975e5bbcf31356ca784aadca6fb24fe577c4a4cf0e534833d192951504f227"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260920030000_context_enrichment_pilot.sql",
+        "sha256": "888eed1c508d5d129880bbd1f974af4af2ebbbee8327e8e27d876af48df2281c"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260922070000_context_catalog_entry.sql",
+        "sha256": "1e37dcabd4a594a1d14920ee76410efd9fecbd622054c343cad113186b93b828"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260924040000_context_release_entry.sql",
+        "sha256": "7925253d7eb10ffe417e35cca609344fffbb501ec4a7cdb44a9d9ac13891ab4b"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925100000_context_songwriter_name_entry.sql",
+        "sha256": "118c08ccb5be7f78759d587740d8db029f5cf83ba8325e7abd7df75528e0eb68"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925110000_context_company_name_entry.sql",
+        "sha256": "cbab76d87271f38d8e6f2af88fce756095c3b580590e05b619cd50b5b7f8cf5e"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925120000_context_campaign_brief_entry.sql",
+        "sha256": "42471a3b3fc97bb98fdacbb8fd76df91b3b9a89f9e29164017246d156defffb8"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925130000_context_supporting_text_entry.sql",
+        "sha256": "12d2d5749be9d7d793bee97b50fdc46d6329cb7586a1926c838a774ba2d1dfa6"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20261008030000_onboarding_membership_lock_privilege.sql",
+        "sha256": "6d6ff0bd683516b7fc5a15c26fd9998f48d44a7a1bddf1ebaf5f27136512f7d3"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20261008160000_context_release_cases.sql",
+        "sha256": "095692a2d01d079993114a8b9c2acd0433ccc31efe9b8280ab18908631ac1884"
+      },
+      {
+        "repository": "database",
+        "commit": "23262f99d2a6c010f00c459a4b1814d6623c3843",
+        "path": "supabase/migrations/20261010213100_context_video_entry.sql",
+        "sha256": "7812f0020f8c3690ed391012f97ea105984157f3c14275939da3472bd1914d20"
+      }
+    ],
+    "compatibility_prerequisites": [
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260920010000_context_foundation.sql",
+        "sha256": "e298767479bf60f460dc78f12fe7cade571582bcc808f8e305e61fde72803fe9"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260920020000_context_spotify_pipeline.sql",
+        "sha256": "85975e5bbcf31356ca784aadca6fb24fe577c4a4cf0e534833d192951504f227"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260920030000_context_enrichment_pilot.sql",
+        "sha256": "888eed1c508d5d129880bbd1f974af4af2ebbbee8327e8e27d876af48df2281c"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260922070000_context_catalog_entry.sql",
+        "sha256": "1e37dcabd4a594a1d14920ee76410efd9fecbd622054c343cad113186b93b828"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260924040000_context_release_entry.sql",
+        "sha256": "7925253d7eb10ffe417e35cca609344fffbb501ec4a7cdb44a9d9ac13891ab4b"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925100000_context_songwriter_name_entry.sql",
+        "sha256": "118c08ccb5be7f78759d587740d8db029f5cf83ba8325e7abd7df75528e0eb68"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925110000_context_company_name_entry.sql",
+        "sha256": "cbab76d87271f38d8e6f2af88fce756095c3b580590e05b619cd50b5b7f8cf5e"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925120000_context_campaign_brief_entry.sql",
+        "sha256": "42471a3b3fc97bb98fdacbb8fd76df91b3b9a89f9e29164017246d156defffb8"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260925130000_context_supporting_text_entry.sql",
+        "sha256": "12d2d5749be9d7d793bee97b50fdc46d6329cb7586a1926c838a774ba2d1dfa6"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20261008030000_onboarding_membership_lock_privilege.sql",
+        "sha256": "6d6ff0bd683516b7fc5a15c26fd9998f48d44a7a1bddf1ebaf5f27136512f7d3"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20261008160000_context_release_cases.sql",
+        "sha256": "095692a2d01d079993114a8b9c2acd0433ccc31efe9b8280ab18908631ac1884"
+      },
+      {
+        "repository": "database",
+        "commit": "23262f99d2a6c010f00c459a4b1814d6623c3843",
+        "path": "supabase/migrations/20261010213100_context_video_entry.sql",
+        "sha256": "7812f0020f8c3690ed391012f97ea105984157f3c14275939da3472bd1914d20"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260923070000_context_enrichment_scope.sql",
+        "sha256": "4f591cac6073b7068ffc5b4766aa88022958d19d7274adc9458eef6633ade1dd"
+      },
+      {
+        "repository": "database",
+        "commit": "7708e337feca212563bdfa48934a72227bcf1b63",
+        "path": "supabase/migrations/20260927090000_context_audio_source.sql",
+        "sha256": "7bd9fbf2e12a4d3f656fa943c5ad9339e24226605ddcdf0502d898afb654d57e"
+      }
+    ],
+    "suffix": [
+      {
+        "path": "proposals/context-retained-video-2131/retained-video.sql",
+        "sha256": "207296c823133abd2532240f608faa6308770baccdc370e0c00c93bea780c3fd"
+      },
+      {
+        "path": "proposals/context-retained-video-2131/fixtures.sql",
+        "sha256": "f02f65fb09c27439105ea9f129cc51111ddf87e4ede6a9da023eb6ca08377eba"
+      }
+    ],
+    "unchanged_locator_regression_fixture": {
+      "repository": "database",
+      "commit": "23262f99d2a6c010f00c459a4b1814d6623c3843",
+      "path": "supabase/tests/context_video_entry.sql",
+      "sha256": "a1259858c736e2d0487374ad4492503c6cd1743c45f8edf1f21c20dc063726eb"
+    },
+    "runner_reference": {
+      "repository": "database",
+      "commit": "f507a77696f20429f977df9885d6c8c11a5f304b",
+      "path": "proposals/application-registration-2104/test_registration.py",
+      "sha256": "4051b2581646cea5ac2d36a23d5d5e6271dd02cbf0997e0792623289914d230c"
+    }
+  },
+  "plan_sha256": "15b538c55a23e407c734afe796f55920f4af658173db9ddfbb5c5bb3a2909c42",
+  "runner_adaptations": [
+    "Safety functions adapted from pinned #138 test_registration.py, fixture_environment through quiesce_worker; application tests/SQL excluded.",
+    "REGISTRATION_QUALIFICATION controls renamed VIDEO_QUALIFICATION; root prefix video-qual; worker deadline 240 seconds for two profiles.",
+    "Source export occurs inside supervised try after environment scrubbing; /usr/bin/git with allowlisted environment and disabled global/system config reads exact local objects only.",
+    "Added source-export hash-failure fault before initdb and explicit owned-root removal receipt; cluster_created reflects actual cluster directory existence.",
+    "Worker test suite supplies source composition, real SQL and blocking-PID assertions; no inherited application test pass.",
+    "Actual macOS exited-worker SIGKILL PermissionError reproduced: bounded checked group absence required after signal denial; a still-present/unverifiable group fails closed. Added unit fault tests and worker-group PID in owned lease for diagnosis; postmaster/socket checks unchanged."
+  ]
+}
