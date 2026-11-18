@@ -16,6 +16,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE op public.release_pack_provider_operations; effective_owner uuid; k text;
  existing jsonb; accepted jsonb; terminal jsonb; conflict jsonb; previous_conflict jsonb;
 BEGIN
+ IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'Receipt append requires READ COMMITTED'; END IF;
  effective_owner:=public.authorize_pack_actor(p_actor,p_org);
  SELECT * INTO STRICT op FROM public.release_pack_provider_operations WHERE id=p_operation AND owner_id=effective_owner;
  IF NOT (((p_identity->>'execution_id')::uuid=op.execution_id AND (p_identity->>'claim_id')::uuid=op.claim_id) OR EXISTS(

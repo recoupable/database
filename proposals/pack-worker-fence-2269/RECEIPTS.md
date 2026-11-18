@@ -12,7 +12,7 @@ The command bounds phase slots: image 0–3 for carousel, otherwise image 0, and
 
 ## Bounded observations
 
-`release_pack_provider_observations` has primary key `(operation_id, kind)`, where kind is accepted, completed, failed or first conflict; at most four rows per operation. Payloads are at most 1024 bytes. Accepted/completed/failed accept only:
+`release_pack_provider_observations` has primary key `(operation_id, kind)`, where kind is accepted, completed, failed or `conflict` (first conflict); at most four rows per operation. Payloads are at most 1024 bytes. Accepted/completed/failed accept only:
 
 - `kind` and `request_id` (1–200 ASCII letters, digits, underscore or hyphen).
 - Optional `output_sha256`, 64 lowercase hexadecimal characters, completed only.
@@ -44,3 +44,5 @@ The owner-scoped read port validates job and cursor ownership and returns at mos
 No TTL, pruning job, worker update/delete port or cascading parent deletion. Retain operations, observations and continuation history for the Pack lifetime, including after settlement/retry. Parent deletion is RESTRICT; any owner-data deletion requires a separately authorized administrative process. Growth is bounded per approved paid attempt, not falsely bounded per owner lifetime. Access revocation hides retained history without erasing it.
 
 Actual proposal tests register operations and continuation grants through the real fenced command, append via a separate service-role transaction, and then deliver an actual refused stale write. They check unchanged Pack/wallet/usage snapshots, bounded concurrent conflicts, owner/claim mismatch, pagination, redaction, privilege denial and same-attempt continuation. The paired API integration uses the same proposal files. These are disposable local PostgreSQL checks, not seeded-history-only mechanics, hosted qualification or live provider evidence.
+
+Append accepts READ COMMITTED transactions only; higher isolation levels are refused before journal mutation. Pagination uses the owner/job/operation-ID index. Accepted-slot conflicts hash the original accepted payload, including after completion.

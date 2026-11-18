@@ -9,6 +9,7 @@ DECLARE owner uuid; j public.release_pack_jobs; a public.release_pack_assets;
  phase text; wanted_model text; wanted_credits bigint; continuation uuid[]; supplied jsonb:=p_input;
 BEGIN
  owner:=public.authorize_pack_actor(p_actor,p_org);
+ IF p_action IS NULL OR p_action NOT IN('prepare','estimate','export','read','approve','resume','run','dispatch_uncertain','claim','context','phase','finish_asset','settle') THEN RAISE EXCEPTION 'Unknown protocol-2 command'; END IF;
  IF jsonb_typeof(p_input) IS DISTINCT FROM 'object' THEN RAISE EXCEPTION 'Invalid Pack input'; END IF;
  IF p_action='prepare' AND NOT(p_input ? 'expected_revision') THEN
    -- Shared with legacy prepare. Protocol ownership is set on INSERT, never promoted.
@@ -70,7 +71,7 @@ BEGIN
  IF p_action='run' THEN
    IF nullif(p_input->>'workflow_run_id','') IS NULL OR length(p_input->>'workflow_run_id')>200 THEN RAISE EXCEPTION 'Invalid workflow identity'; END IF;
    IF e.workflow_run_id IS NOT NULL AND e.workflow_run_id<>p_input->>'workflow_run_id' THEN RAISE EXCEPTION 'Workflow identity conflict' USING ERRCODE='P0003'; END IF;
- ELSIF p_action<>'dispatch_uncertain' THEN
+ ELSIF p_action<>'dispatch_uncertain' OR e.workflow_run_id IS NOT NULL THEN
    IF e.workflow_run_id IS NULL OR p_input->>'workflow_run_id' IS DISTINCT FROM e.workflow_run_id THEN RAISE EXCEPTION 'Stale workflow' USING ERRCODE='P0003'; END IF;
  END IF;
  IF p_action IN('phase','finish_asset') THEN
@@ -87,16 +88,10 @@ BEGIN
    IF e.settlement_payload<>p_input THEN RAISE EXCEPTION 'Settlement payload conflict'; END IF;
    RETURN e.settlement_result;
  END IF;
- IF j.status<>'running' THEN RAISE EXCEPTION 'Pack not running'; END IF;
- IF j.hold_expires_at<now() THEN
-   result:=public.release_pack_command_legacy_internal(p_actor,p_org,'settle',j.id,jsonb_build_object('error','Production window expired; reconcile accepted work'));
-   UPDATE public.release_pack_executions SET settlement_payload=jsonb_build_object('expiry',true),settlement_result=result WHERE id=e.id;
-   RETURN result||jsonb_build_object('command_expired',true);
- END IF;
- IF p_action='run' THEN
-   UPDATE public.release_pack_executions SET workflow_run_id=p_input->>'workflow_run_id' WHERE id=e.id AND workflow_run_id IS NULL;
- ELSIF p_action='dispatch_uncertain' THEN
-   IF e.workflow_run_id IS NOT NULL THEN RETURN public.release_pack_command_legacy_internal(p_actor,p_org,'read',j.id,'{}'); END IF;
+ -- Action-specific CAS and read-only replay decisions are part of the fence too.
+ -- Do not let an expired hold turn stale input or an old claim replay into settlement.
+ IF p_action='context' THEN
+   IF (p_input->>'context_version')::integer IS DISTINCT FROM j.context_version THEN RAISE EXCEPTION 'Context version changed'; END IF;
  ELSIF p_action='claim' THEN
    request:=(p_input->>'request_id')::uuid;
    IF request IS NULL THEN RAISE EXCEPTION 'Claim request identity required'; END IF;
@@ -112,6 +107,23 @@ BEGIN
    IF (p_input->>'asset_attempt')::integer IS DISTINCT FROM a.attempt THEN RAISE EXCEPTION 'Stale pending attempt' USING ERRCODE='P0003'; END IF;
    IF e.resume_asset_id=a.id THEN
      IF a.status<>'running' THEN RAISE EXCEPTION 'Resume asset not running'; END IF;
+   ELSIF a.status<>'pending' THEN
+     RETURN jsonb_build_object('job',to_jsonb(j),'asset',to_jsonb(a),'claimed',false);
+   END IF;
+ END IF;
+ IF j.status<>'running' THEN RAISE EXCEPTION 'Pack not running'; END IF;
+ IF j.hold_expires_at<now() THEN
+   result:=public.release_pack_command_legacy_internal(p_actor,p_org,'settle',j.id,jsonb_build_object('error','Production window expired; reconcile accepted work'));
+   result:=result||jsonb_build_object('command_expired',true);
+   UPDATE public.release_pack_executions SET settlement_payload=CASE WHEN p_action='settle' THEN supplied ELSE jsonb_build_object('expiry',true) END,settlement_result=result WHERE id=e.id;
+   RETURN result;
+ END IF;
+ IF p_action='run' THEN
+   UPDATE public.release_pack_executions SET workflow_run_id=p_input->>'workflow_run_id' WHERE id=e.id AND workflow_run_id IS NULL;
+ ELSIF p_action='dispatch_uncertain' THEN
+   IF e.workflow_run_id IS NOT NULL THEN RETURN public.release_pack_command_legacy_internal(p_actor,p_org,'read',j.id,'{}'); END IF;
+ ELSIF p_action='claim' THEN
+   IF e.resume_asset_id=a.id THEN
      SELECT coalesce(array_agg(id),'{}') INTO continuation FROM public.release_pack_provider_operations WHERE owner_id=owner AND asset_id=a.id AND attempt=a.attempt;
    ELSE
      result:=public.release_pack_command_legacy_internal(p_actor,p_org,'claim',j.id,p_input);
@@ -126,7 +138,6 @@ BEGIN
    UPDATE public.release_pack_claims SET claim_result=result WHERE id=c.id;
    RETURN result;
  ELSIF p_action='context' THEN
-   IF (p_input->>'context_version')::integer IS DISTINCT FROM j.context_version THEN RAISE EXCEPTION 'Context version changed'; END IF;
    UPDATE public.release_pack_jobs SET context_version=context_version+1 WHERE id=j.id;
  ELSIF p_action='phase' THEN
    phase:=p_input->>'phase'; value:=p_input->'value'; previous:=a.provider_state->phase;
@@ -153,6 +164,7 @@ BEGIN
        wanted_model:=CASE WHEN has_foundation OR coalesce(jsonb_array_length(j.quote->'sources'->'references'),jsonb_array_length(j.brief->'reference_image_urls'),0)>0 THEN j.quote->'execution_config'->'models'->>'image_edit' ELSE j.quote->'execution_config'->'models'->>'image' END;
        wanted_credits:=greatest(1,round((j.quote->'execution_config'->'rates'->>'image_usd_per_unit')::numeric*(j.quote->'execution_config'->'rates'->>'credits_per_usd')::numeric));
      ELSE RAISE EXCEPTION 'Provider phase outside quoted plan'; END IF;
+     IF value->>'state'='submitting' AND value ? 'request_id' THEN RAISE EXCEPTION 'Submitting intent cannot contain provider receipt'; END IF;
      SELECT o.* INTO op FROM public.release_pack_provider_operations o WHERE o.owner_id=owner AND o.asset_id=a.id AND o.attempt=a.attempt AND o.phase=cmd.phase;
      IF NOT FOUND THEN
        IF value->>'state' IS DISTINCT FROM 'submitting' OR wanted_model IS NULL OR value->>'model' IS DISTINCT FROM wanted_model
@@ -173,7 +185,7 @@ BEGIN
      p_input:=p_input||jsonb_build_object('value',value);
    ELSIF previous IS NOT NULL AND previous<>value THEN RAISE EXCEPTION 'Saved phase conflict'; END IF;
  ELSIF p_action='finish_asset' THEN
-   IF p_input->>'status'='failed' AND EXISTS(SELECT 1 FROM jsonb_each(a.provider_state) entry WHERE entry.key LIKE '%submission%' AND entry.value->>'state' IS DISTINCT FROM 'complete') THEN
+   IF p_input->>'status' IN('failed','completed') AND EXISTS(SELECT 1 FROM jsonb_each(a.provider_state) entry WHERE entry.key LIKE '%submission%' AND entry.value->>'state' IS DISTINCT FROM 'complete') THEN
      RAISE EXCEPTION 'Incomplete provider attempt requires uncertainty';
    END IF;
  ELSIF p_action<>'settle' THEN RAISE EXCEPTION 'Unknown protocol-2 command';

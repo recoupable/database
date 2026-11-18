@@ -33,6 +33,7 @@ CREATE TABLE public.release_pack_provider_operations (
  charge_credits bigint NOT NULL CHECK(charge_credits>0), created_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(owner_id,asset_id,attempt,phase)
 );
+CREATE INDEX release_pack_provider_operations_page ON public.release_pack_provider_operations(owner_id,job_id,id);
 CREATE TABLE public.release_pack_provider_observations (
  operation_id uuid NOT NULL REFERENCES public.release_pack_provider_operations(id) ON DELETE RESTRICT,
  kind text NOT NULL CHECK(kind IN('accepted','completed','failed','conflict')),
