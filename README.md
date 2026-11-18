@@ -139,9 +139,3 @@ The proposal includes pre-activation rollback, role/guard checks and concurrency
 reproductions. API adapters, workflow-first binding, old-worker drainage, production
 prerequisite checks and root-approved activation remain required. No runtime cutover
 is included; the published quiescent-only DELETE contract remains in effect.
-
-### Pending Catalog snapshot size correction (draft PR125)
-
-The unapplied Catalog migration emits exact SQLSTATE `22001` / `CATALOG_SNAPSHOT_TOO_LARGE` only for byte-limit rejection in `save_context_catalog_case`. Exact-key replay precedes new size checks; the fingerprint still covers original input. Incoming JSONB text and the final snapshot with server-assigned revision must fit 1,048,576 bytes. The final check precedes case/revision mutation; the existing table CHECK remains defense in depth. Compact API JSON preflight can be smaller because exponent expansion and JSONB formatting differ. No cap, JSON value, grant, authorization or rollout policy changes.
-
-This correction remains behind the existing draft/no-apply release gate. `tests/catalog_size_fixture.py` reuses the accepted four-file synthetic bootstrap for paired API qualification, not hosted migration application.
