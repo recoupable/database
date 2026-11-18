@@ -11,14 +11,17 @@ BEGIN
  owner:=public.authorize_pack_actor(p_actor,p_org);
  IF jsonb_typeof(p_input) IS DISTINCT FROM 'object' THEN RAISE EXCEPTION 'Invalid Pack input'; END IF;
  IF p_action='prepare' AND NOT(p_input ? 'expected_revision') THEN
-   -- Lock new identity/idempotency resolution before changing protocol ownership.
+   -- Shared with legacy prepare. Protocol ownership is set on INSERT, never promoted.
    PERFORM pg_advisory_xact_lock(hashtextextended(owner::text||':'||(p_input->>'idempotency_key'),0));
-   IF EXISTS(SELECT 1 FROM public.release_pack_jobs WHERE owner_id=owner AND idempotency_key=p_input->>'idempotency_key' AND protocol<>2) THEN
-     RAISE EXCEPTION 'Legacy Pack cannot be adopted'; END IF;
-   result:=public.release_pack_command_legacy_internal(p_actor,p_org,p_action,p_job,p_input);
-   p_job:=(result->'job'->>'id')::uuid;
-   UPDATE public.release_pack_jobs SET protocol=2 WHERE id=p_job;
-   RETURN public.release_pack_command_legacy_internal(p_actor,p_org,'read',p_job,'{}');
+   INSERT INTO public.release_pack_jobs(id,owner_id,created_by,idempotency_key,fingerprint,brief,deliverables,status,sufficient_brief_at,protocol)
+   VALUES(p_job,owner,p_actor,p_input->>'idempotency_key',p_input->>'fingerprint',p_input->'brief',p_input->'deliverables',p_input->>'status',CASE WHEN p_input->>'status'='ready_to_quote' THEN now() END,2)
+   ON CONFLICT(owner_id,idempotency_key) DO NOTHING;
+   -- Resolve and lock the actual winner, including after a unique-index wait.
+   SELECT * INTO STRICT j FROM public.release_pack_jobs
+   WHERE owner_id=owner AND idempotency_key=p_input->>'idempotency_key' FOR UPDATE;
+   IF j.protocol<>2 THEN RAISE EXCEPTION 'Legacy Pack cannot be adopted'; END IF;
+   IF j.fingerprint IS DISTINCT FROM p_input->>'fingerprint' THEN RAISE EXCEPTION 'Idempotency key conflicts with different inputs'; END IF;
+   RETURN public.release_pack_command_legacy_internal(p_actor,p_org,'read',j.id,'{}');
  END IF;
  SELECT * INTO STRICT j FROM public.release_pack_jobs WHERE id=p_job AND owner_id=owner FOR UPDATE;
  IF j.protocol<>2 THEN RAISE EXCEPTION 'Legacy Pack cannot be adopted'; END IF;

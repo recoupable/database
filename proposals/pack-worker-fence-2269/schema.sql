@@ -61,9 +61,13 @@ END $$;
 REVOKE ALL ON FUNCTION public.authorize_pack_actor(uuid,uuid) FROM PUBLIC,anon,authenticated,service_role;
 CREATE FUNCTION public.release_pack_command(p_actor uuid,p_org uuid,p_action text,p_job uuid,p_input jsonb DEFAULT '{}')
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
-DECLARE result jsonb;
+DECLARE result jsonb; owner uuid;
 BEGIN
- PERFORM public.authorize_pack_actor(p_actor,p_org);
+ owner:=public.authorize_pack_actor(p_actor,p_org);
+ -- Both protocols serialize the same creation identity before looking up or inserting.
+ IF p_action='prepare' AND NOT(p_input ? 'expected_revision') THEN
+   PERFORM pg_advisory_xact_lock(hashtextextended(owner::text||':'||(p_input->>'idempotency_key'),0));
+ END IF;
  IF EXISTS(SELECT 1 FROM public.release_pack_jobs WHERE id=p_job AND protocol=2) THEN
    RAISE EXCEPTION 'Protocol 2 requires a fenced caller'; END IF;
  result:=public.release_pack_command_legacy_internal(p_actor,p_org,p_action,p_job,p_input);

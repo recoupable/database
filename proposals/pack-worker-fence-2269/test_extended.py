@@ -4,6 +4,7 @@ import json
 import unittest
 import uuid
 from test_contract import FencedPacks, ReleasePackJobs
+from test_creation_race import CreationRace
 
 class Extended(FencedPacks):
     def register(self,f,phase='image_submission_0'):
@@ -101,7 +102,7 @@ class LegacyCompatibility(ReleasePackJobs):
 
 if __name__=='__main__':
     suite=unittest.TestSuite()
-    for cls in [FencedPacks,Extended]:
+    for cls in [FencedPacks,Extended,CreationRace]:
         suite.addTests(cls(x) for x in cls.__dict__ if x.startswith('test_'))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(LegacyCompatibility))
     result=unittest.TextTestRunner(verbosity=2).run(suite)
