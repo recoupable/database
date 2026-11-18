@@ -29,7 +29,7 @@ class ProfessionalRoster(unittest.TestCase):
         cls.sql((ROOT/'supabase/migrations/20261008030000_onboarding_membership_lock_privilege.sql').read_text())
         for migration in sorted((ROOT/'supabase/migrations').glob('20261008050*.sql')):
             cls.sql(migration.read_text())
-        migration = ROOT/'supabase/migrations/20261023160000_professional_artist_accounts.sql'
+        migration = ROOT/'supabase/migrations/20261024002432_professional_artist_accounts.sql'
         if migration.exists() and getattr(cls, "apply_account_migration", True):
             cls.sql(migration.read_text())
     @classmethod
@@ -186,7 +186,7 @@ class ProfessionalUpgrade(unittest.TestCase):
           INSERT INTO organization_professionals(id,organization_id,name,roles,confirmed_by)
             VALUES ('{sidney_professional}','{sidney_org}','Fixture professional',ARRAY['songwriter','producer'],'{sidney_actor}');
         """)
-        migration = (ROOT/'supabase/migrations/20261023160000_professional_artist_accounts.sql').read_text()
+        migration = (ROOT/'supabase/migrations/20261024002432_professional_artist_accounts.sql').read_text()
         self.assertIn('prerequisites changed',self.sql('BEGIN;'+migration+'COMMIT;',fails=True))
         self.assertEqual(self.sql("SELECT count(*) FROM information_schema.columns WHERE table_name='organization_professionals' AND column_name='artist_id'"),'0')
         self.sql(f"INSERT INTO account_artist_ids VALUES ('{sidney_actor}','{sidney_artist}')")
