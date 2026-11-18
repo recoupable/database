@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -295,8 +296,28 @@ def quote(value):
     return "'"+str(value).replace("'", "''")+"'"
 
 
+class PsqlExecutionFailure(RuntimeError):
+    """Executor, connection, termination, or unclassified diagnostic failure."""
+
+
 class SQLFailure(RuntimeError):
-    """Only a completed psql command with nonzero exit status."""
+    """A completed ON_ERROR_STOP script error with one verbose server SQLSTATE."""
+    def __init__(self, sqlstate, message, result):
+        super().__init__(f'{sqlstate}: {message}')
+        self.sqlstate = sqlstate
+        self.message = message
+        self.result = result
+
+
+def checked_psql_result(result):
+    if result.returncode == 0:
+        return result
+    # psql exit 3 is ON_ERROR_STOP script failure; 1/2/signals are not SQL denials.
+    errors = re.findall(r'^ERROR:  ([0-9A-Z]{5}): ([^\n]*)$', result.stderr, re.MULTILINE)
+    if result.returncode != 3 or len(errors) != 1:
+        raise PsqlExecutionFailure(f'psql execution failed ({result.returncode}): {result.stderr}')
+    sqlstate, message = errors[0]
+    raise SQLFailure(sqlstate, message, result)
 
 
 class Video(unittest.TestCase):
@@ -320,8 +341,7 @@ class Video(unittest.TestCase):
             denied = cls.sql("SELECT has_schema_privilege('service_role','context_retained_video_2131','USAGE'),has_function_privilege('service_role','context_retained_video_2131.save_projection(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE')")
             if denied != 'f|f': raise AssertionError('Proposal grants runtime access')
             # Execute actual role denials before fixture-only grants.
-            result = cls.execute("SET ROLE service_role; SELECT context_retained_video_2131.read_projection(NULL,NULL,NULL)",check=False)
-            if result.returncode==0: raise AssertionError('Default service invocation succeeded')
+            cls.deny("SET ROLE service_role; SELECT context_retained_video_2131.read_projection(NULL,NULL,NULL)", '42501')
             cls.sql('GRANT USAGE ON SCHEMA context_retained_video_2131 TO service_role; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA context_retained_video_2131 TO service_role;')
             cls.sql((HERE/'fixtures.sql').read_text())
             regression=(Path(cls.socket).parent/'sources'/'context_video_entry.sql').read_text()
@@ -335,10 +355,12 @@ class Video(unittest.TestCase):
         return [str(cls.bin/'psql'),'-XqAt','-h',cls.socket,'-p','55473','-d',getattr(cls,'database','postgres'),'-v','ON_ERROR_STOP=1','-v','VERBOSITY=verbose']
 
     @classmethod
-    def execute(cls,sql,name='video-test',check=True):
-        r=subprocess.run(cls.args(),input=sql,env={**cls.env,'PGAPPNAME':name},capture_output=True,text=True,timeout=18)
-        if check and r.returncode: raise SQLFailure(r.stderr)
-        return r
+    def execute(cls,sql,name='video-test'):
+        try:
+            result=subprocess.run(cls.args(),input=sql,env={**cls.env,'PGAPPNAME':name},capture_output=True,text=True,timeout=18)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise PsqlExecutionFailure('psql executor failed') from error
+        return checked_psql_result(result)
 
     @classmethod
     def sql(cls,sql,name='video-test'):
@@ -361,11 +383,19 @@ class Video(unittest.TestCase):
 
     def save(self,**kwargs): return json.loads(self.sql(self.save_sql(**kwargs)))
 
-    def deny(self,sql):
-        r=self.execute(sql,check=False)
-        self.assertNotEqual(r.returncode,0,r.stdout)
-        self.assertEqual(r.stdout.strip(),'')
-        return r.stderr
+    @classmethod
+    def deny(cls,sql,expected_sqlstate,expected_message=None):
+        try:
+            cls.execute(sql)
+        except SQLFailure as error:
+            if error.sqlstate != expected_sqlstate:
+                raise AssertionError(f'Expected SQLSTATE {expected_sqlstate}, got {error.sqlstate}: {error.message}') from error
+            if expected_message is not None and error.message != expected_message:
+                raise AssertionError(f'Unexpected server error message: {error.message}') from error
+            if error.result.stdout.strip():
+                raise AssertionError('SQL denial returned unexpected payload')
+            return error.result.stderr
+        raise AssertionError(f'Expected SQLSTATE {expected_sqlstate}, but SQL succeeded')
 
     def mutate(self,expression):
         self.sql("UPDATE public.context_source_versions SET content="+expression+" WHERE id="+quote(self.f['snapshot'])+"; UPDATE public.context_source_versions SET fingerprint=encode(sha256(convert_to(content::text,'UTF8')),'hex') WHERE id="+quote(self.f['snapshot']))
@@ -388,10 +418,10 @@ class Video(unittest.TestCase):
                 self.assertEqual('t',self.sql("SELECT provider_cost_micros IS NULL AND provider_cost_status='unknown' AND settlement_reference IS NULL FROM public.context_attempts WHERE id="+quote(saved['attemptId'])))
                 self.assertEqual(sorted([self.f['snapshot'],self.f['version']]),json.loads(self.sql('SELECT jsonb_agg(source_version_id ORDER BY source_version_id) FROM public.context_result_sources WHERE result_id='+quote(saved['resultId']))))
                 self.assertEqual('0',self.sql("SELECT count(*) FROM public.context_documents WHERE topic NOT IN ('video_locator','video_narrative')"))
-                self.deny(self.save_sql(revision=1));self.assertEqual(counts,self.counts())
-                self.deny(self.save_sql(key='late',revision=0));self.assertEqual(counts,self.counts())
+                self.deny(self.save_sql(revision=1), '22023');self.assertEqual(counts,self.counts())
+                self.deny(self.save_sql(key='late',revision=0), '40001');self.assertEqual(counts,self.counts())
                 module={'fingerprint':'a'*64,'subjectId':self.f['subject'],'topic':'video_narrative','evidenceKind':'interpretation'}
-                self.deny('SET ROLE service_role; SELECT public.claim_context_enrichment('+quote(self.f['owner'])+','+quote(self.f['request'])+','+quote(json.dumps(module))+'::jsonb)')
+                self.deny('SET ROLE service_role; SELECT public.claim_context_enrichment('+quote(self.f['owner'])+','+quote(self.f['request'])+','+quote(json.dumps(module))+'::jsonb)', 'P0001', 'Invalid enrichment module')
                 self.assertEqual(counts,self.counts())
 
     def test_withdrawal_removed_and_identity_lifecycle(self):
@@ -401,18 +431,18 @@ class Video(unittest.TestCase):
         for change in changes:
             with self.subTest(change=change):
                 self.seed();self.save();self.sql(change.format(**{k:quote(v) for k,v in self.f.items() if k!='evidence'}));counts=self.counts()
-                self.deny(self.read_sql());self.deny(self.save_sql());self.deny(self.save_sql(key='new',revision=1));self.assertEqual(counts,self.counts())
+                self.deny(self.read_sql(), '42501');self.deny(self.save_sql(), '42501');self.deny(self.save_sql(key='new',revision=1), '42501');self.assertEqual(counts,self.counts())
         self.seed();self.save()
         self.sql('UPDATE public.context_resource_links SET id=gen_random_uuid() WHERE id='+quote(self.f['link']))
-        self.deny(self.read_sql());self.deny(self.save_sql())
+        self.deny(self.read_sql(), '42501');self.deny(self.save_sql(), '22023')
 
     def test_scope_and_source_rejections(self):
-        for args in [dict(actor=self.f['outsider']),dict(owner=self.f['outsider']),dict(request='20000000-0000-4000-8000-000000000000'),dict(snapshot=self.f['version'])]:
-            before=self.counts();self.deny(self.save_sql(**args));self.assertEqual(before,self.counts())
+        for args,state in [(dict(actor=self.f['outsider']),'42501'),(dict(owner=self.f['outsider']),'42501'),(dict(request='20000000-0000-4000-8000-000000000000'),'42501'),(dict(snapshot=self.f['version']),'22023')]:
+            before=self.counts();self.deny(self.save_sql(**args), state);self.assertEqual(before,self.counts())
         for change in ["UPDATE public.context_source_versions SET media_manifest='{{}}' WHERE id={version}",
                        "UPDATE public.context_source_versions SET retrieved_at=retrieved_at+interval '1 second' WHERE id={version}",
                        "UPDATE public.context_source_versions SET content=NULL WHERE id={version}"]:
-            self.seed();self.sql(change.format(**{k:quote(v) for k,v in self.f.items() if k!='evidence'}));before=self.counts();self.deny(self.save_sql());self.assertEqual(before,self.counts())
+            self.seed();self.sql(change.format(**{k:quote(v) for k,v in self.f.items() if k!='evidence'}));before=self.counts();self.deny(self.save_sql(), '42501');self.assertEqual(before,self.counts())
 
     def test_envelope_negative_matrix(self):
         expressions=["content||'{\"extra\":true}'", "content-'title'", "jsonb_set(content,'{identity}','{\"state\":\"matched\"}')",
@@ -428,7 +458,7 @@ class Video(unittest.TestCase):
          "jsonb_set(content,'{analysis}','{\"state\":\"unavailable\",\"reason\":\"ok\",\"extra\":1}')"]
         for expression in expressions:
             with self.subTest(expression=expression):
-                self.seed();self.mutate(expression);before=self.counts();self.deny(self.save_sql());self.assertEqual(before,self.counts())
+                self.seed();self.mutate(expression);before=self.counts();self.deny(self.save_sql(), '22023');self.assertEqual(before,self.counts())
         self.seed();self.mutate("jsonb_set(jsonb_set(content,'{title}',to_jsonb(repeat('🎵',2000))),'{captions}','{\"state\":\"missing\",\"reason\":\"Not retained\"}')")
         self.assertEqual('missing',self.save()['evidence']['captions']['state'])
 
@@ -476,28 +506,32 @@ class Video(unittest.TestCase):
                         if first=='operation':self.race(op,change)
                         else:
                             before=self.counts()
-                            with self.assertRaisesRegex(SQLFailure,'42501'):self.race(change,op)
+                            with self.assertRaises(SQLFailure) as raised:self.race(change,op)
+                            self.assertEqual(raised.exception.sqlstate,'42501')
                             self.assertEqual(before,self.counts())
-                        self.deny(self.read_sql());self.deny(self.save_sql())
+                        self.deny(self.read_sql(), '42501');self.deny(self.save_sql(), '42501')
 
     def test_concurrent_replay_cas_revocation_withdrawal_cancellation(self):
         self.race(self.save_sql(),self.save_sql());self.assertEqual('1',self.sql("SELECT count(*) FROM public.context_results WHERE topic='video_narrative'"))
         self.seed()
-        with self.assertRaisesRegex(SQLFailure,'40001.*revision conflict'):self.race(self.save_sql(),self.save_sql(key='second'))
+        with self.assertRaises(SQLFailure) as raised:self.race(self.save_sql(),self.save_sql(key='second'))
+        self.assertEqual(raised.exception.sqlstate,'40001')
+        self.assertEqual(raised.exception.message,'Projection revision conflict')
         for change in ["DELETE FROM public.account_organization_ids WHERE account_id={actor};", "SELECT public.withdraw_context_source({owner},{dependency});", "UPDATE public.context_requests SET status='cancelled' WHERE id={request};", "UPDATE public.context_resources SET provider_id='OtherIdAB_2' WHERE id={resource};"]:
             self.seed();sql=change.format(**{k:quote(v) for k,v in self.f.items() if k!='evidence'})
-            self.race(self.save_sql(),sql);self.deny(self.read_sql())
+            self.race(self.save_sql(),sql);self.deny(self.read_sql(), '42501')
             self.seed();sql=change.format(**{k:quote(v) for k,v in self.f.items() if k!='evidence'})
-            with self.assertRaisesRegex(SQLFailure,'42501'):self.race(sql,self.save_sql())
+            with self.assertRaises(SQLFailure) as raised:self.race(sql,self.save_sql())
+            self.assertEqual(raised.exception.sqlstate,'42501')
 
     def test_cross_request_and_fault_rollback(self):
         saved=self.save()
         req=json.loads(self.sql('SELECT public.create_context_video_request('+quote(self.f['owner'])+','+quote(self.f['actor'])+",'AbCdEfGhI_1','second')"))
-        self.deny(self.read_sql(request=req['id']));self.deny(self.save_sql(request=req['id']))
+        self.deny(self.read_sql(request=req['id']), '42501');self.deny(self.save_sql(request=req['id']), '22023')
         for table in ['context_documents','context_attempts','context_results','context_result_sources']:
             self.seed();before=self.counts()
             self.sql('CREATE TRIGGER fail_write AFTER INSERT ON public.'+table+' FOR EACH ROW EXECUTE FUNCTION video_fixture.raise_fault()')
-            try:self.assertIn('fixture write fault',self.deny(self.save_sql()));self.assertEqual(before,self.counts())
+            try:self.deny(self.save_sql(), 'P0001', 'fixture write fault');self.assertEqual(before,self.counts())
             finally:self.sql('DROP TRIGGER fail_write ON public.'+table)
 
 
@@ -508,7 +542,7 @@ class Video(unittest.TestCase):
                      "jsonb_set(content,'{sources,0,retrievedAt}','\"2026-11-17T24:00:00Z\"')",
                      "jsonb_set(content,'{sources,0,retrievedAt}','\"2026-11-17T23:59:60Z\"')",
                      "jsonb_set(content,'{sources,0,retrievedAt}','\"2026-11-18T00:00:00.0000001Z\"')"]:
-            self.seed();self.mutate(expr);self.assertIn('22023',self.deny(self.save_sql()))
+            self.seed();self.mutate(expr);self.deny(self.save_sql(), '22023')
         self.seed()
         analysis={'state':'available','sourceVersionIds':[self.f['version']], 'ranges':[{'startSeconds':0,'endSeconds':10,'observations':['Retained observation'],'interpretation':'Bounded interpretation'}]}
         self.mutate("jsonb_set(content,'{analysis}',"+quote(json.dumps(analysis))+"::jsonb)")
@@ -517,15 +551,15 @@ class Video(unittest.TestCase):
                          "UPDATE public.context_results SET normalized_response='{{}}' WHERE id={result}"]:
             self.seed();saved=self.save()
             self.sql(mutation.format(result=quote(saved['resultId']),version=quote(self.f['version'])))
-            self.assertIn('42501',self.deny(self.read_sql()));self.assertIn('42501',self.deny(self.save_sql()))
+            self.assertIn('42501',self.deny(self.read_sql(), '42501'));self.assertIn('42501',self.deny(self.save_sql(), '42501'))
 
     def test_missing_foreign_versions_subject_lock_and_supersession(self):
         self.sql('DELETE FROM public.context_source_versions WHERE id='+quote(self.f['version']))
-        self.assertIn('42501',self.deny(self.save_sql()))
+        self.assertIn('42501',self.deny(self.save_sql(), '42501'))
         self.seed()
         # Real foreign-owner source/version rows replace the referenced dependency.
         self.sql('DELETE FROM public.context_source_versions WHERE id='+quote(self.f['version'])+'; INSERT INTO public.context_sources(id,owner_id,kind) VALUES(gen_random_uuid(),'+quote(self.f['outsider'])+",'provider_metadata'); INSERT INTO public.context_source_versions(id,owner_id,source_id,fingerprint,content) SELECT "+quote(self.f['version'])+','+quote(self.f['outsider'])+",id,repeat('b',64),'{}' FROM public.context_sources WHERE owner_id="+quote(self.f['outsider']))
-        self.assertIn('42501',self.deny(self.save_sql()))
+        self.assertIn('42501',self.deny(self.save_sql(), '42501'))
         for first in ['operation','mutation']:
             self.seed()
             # A no-op still obtains UPDATE row locks, proving the subject lock exists.
@@ -536,7 +570,7 @@ class Video(unittest.TestCase):
         replacement=self.save_sql(key='new',revision=1)
         self.race(self.read_sql(),replacement)
         self.assertNotEqual(original['resultId'],json.loads(self.sql(self.read_sql()))['resultId'])
-        self.assertIn('42501',self.deny(self.save_sql()))
+        self.assertIn('42501',self.deny(self.save_sql(), '42501'))
 
     def test_source_count_and_exact_byte_boundaries(self):
         # Add real retained rows, preserving the same owner/request/media binding.
@@ -545,7 +579,7 @@ class Video(unittest.TestCase):
             self.sql("INSERT INTO public.context_source_versions(owner_id,source_id,fingerprint,content,media_manifest,retrieved_at) SELECT owner_id,source_id,encode(sha256(convert_to(n::text,'UTF8')),'hex'),jsonb_build_object('observation',n),media_manifest,retrieved_at FROM public.context_source_versions CROSS JOIN generate_series(1,"+str(n)+") n WHERE id="+quote(self.f['version']))
             self.mutate("jsonb_set(content,'{sources}',(SELECT jsonb_agg(jsonb_build_object('versionId',v.id,'videoId','AbCdEfGhI_1','mediaVersion','upload-1','retrievedAt','2026-11-18T00:00:00Z') ORDER BY v.id) FROM public.context_source_versions v WHERE v.media_manifest ? 'contextVideo'))")
             if n==30:self.assertEqual(32,len(self.save()['evidence']['sources']))
-            else:self.assertIn('22023',self.deny(self.save_sql()))
+            else:self.deny(self.save_sql(), '22023')
         self.seed()
         analysis={'state':'available','sourceVersionIds':[self.f['version']], 'ranges':[{'startSeconds':0,'endSeconds':10,'observations':['a']*11,'interpretation':'Known'} for _ in range(100)]}
         self.mutate("jsonb_set(content,'{analysis}',"+quote(json.dumps(analysis))+"::jsonb)")
@@ -560,16 +594,16 @@ class Video(unittest.TestCase):
         self.assertEqual('saved',self.save()['state'])
         # One ASCII byte in description changes only total size, within per-field bounds.
         self.mutate("jsonb_set(content,'{description}',to_jsonb((content->>'description')||'x'))")
-        self.assertIn('22023',self.deny(self.save_sql(key='oversize',revision=1)))
+        self.deny(self.save_sql(key='oversize',revision=1), '22023')
 
     def test_numeric_video_id_and_upper_count_limits(self):
         self.sql("UPDATE public.context_resources SET provider_id='12345678901' WHERE id="+quote(self.f['resource'])+"; UPDATE public.context_requests SET input=jsonb_set(input,'{videoId}','\"12345678901\"') WHERE id="+quote(self.f['request'])+"; UPDATE public.context_source_versions SET media_manifest=jsonb_set(media_manifest,'{contextVideo,videoId}','\"12345678901\"') WHERE media_manifest ? 'contextVideo'")
         self.mutate("jsonb_set(jsonb_set(jsonb_set(content,'{videoId}','12345678901'),'{sources,0,videoId}','12345678901'),'{sources,1,videoId}','12345678901')")
-        self.assertIn('22023',self.deny(self.save_sql()))
+        self.deny(self.save_sql(), '22023')
         self.seed()
         for path,count,item in [('performers',51,self.f['evidence']['performers'][0]),('captions.segments',501,self.f['evidence']['captions']['segments'][0])]:
             self.seed();self.mutate("jsonb_set(content,"+quote('{'+path.replace('.',',')+'}')+','+quote(json.dumps([item]*count))+"::jsonb)")
-            self.assertIn('22023',self.deny(self.save_sql()))
+            self.deny(self.save_sql(), '22023')
 
     def test_signal_denial_never_substitutes_for_group_absence(self):
         from unittest.mock import patch
@@ -586,9 +620,48 @@ class Video(unittest.TestCase):
                 with patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],code,stdout,'')):
                     with self.assertRaises(RuntimeError):_group_exists(4242)
 
+    def test_denial_rejects_connection_executor_and_unexpected_errors(self):
+        from unittest.mock import patch
+        # Actual connection failure stays inside this fixture's owned Unix path.
+        missing_socket=self.args();missing_socket[missing_socket.index('-h')+1]=str(Path(self.socket)/'absent-socket')
+        with patch.object(Video,'args',return_value=missing_socket):
+            with self.assertRaises(PsqlExecutionFailure):self.deny('SELECT 1','42501')
+        # Actual missing executable is an executor failure, never a SQL refusal.
+        missing_binary=self.args();missing_binary[0]=str(Path(self.socket)/'absent-psql')
+        with patch.object(Video,'args',return_value=missing_binary):
+            with self.assertRaises(PsqlExecutionFailure):self.deny('SELECT 1','42501')
+        intended='ERROR:  42501: expected authority denial\n'
+        for code,stderr in [(1,intended),(2,intended),(-15,intended),(3,'connection lost'),
+                            (3,'FATAL:  42501: connection refused\n'),(3,intended+intended)]:
+            with self.subTest(code=code,stderr=stderr):
+                result=subprocess.CompletedProcess([],code,'',stderr)
+                with patch.object(subprocess,'run',return_value=result):
+                    with self.assertRaises(PsqlExecutionFailure):self.deny('SELECT 1','42501')
+        with patch.object(subprocess,'run',side_effect=subprocess.TimeoutExpired('psql',18)):
+            with self.assertRaises(PsqlExecutionFailure):self.deny('SELECT 1','42501')
+        for state in ['42601','42883','55P03','57014','22023']:
+            result=subprocess.CompletedProcess([],3,'',f'ERROR:  {state}: unrelated failure mentioning 42501\n')
+            with patch.object(subprocess,'run',return_value=result):
+                with self.assertRaisesRegex(AssertionError,'Expected SQLSTATE 42501'):
+                    self.deny('SELECT 1','42501')
+        result=subprocess.CompletedProcess([],3,'','ERROR:  P0001: unrelated trigger failure\n')
+        with patch.object(subprocess,'run',return_value=result):
+            with self.assertRaisesRegex(AssertionError,'Unexpected server error message'):
+                self.deny('SELECT 1','P0001','fixture write fault')
+        # The intended verbose server diagnostic is accepted; stdout is still forbidden.
+        with patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],3,'',intended)):
+            self.deny('SELECT 1','42501','expected authority denial')
+        with patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],3,'leaked payload',intended)):
+            with self.assertRaisesRegex(AssertionError,'unexpected payload'):self.deny('SELECT 1','42501')
+        with patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],0,'','')):
+            with self.assertRaisesRegex(AssertionError,'SQL succeeded'):self.deny('SELECT 1','42501')
+        # Real unexpected server SQLSTATE cannot satisfy an authority expectation either.
+        with self.assertRaisesRegex(AssertionError,'got 42883'):
+            self.deny('SELECT video_fixture.no_such_function()','42501')
+
     def test_browser_roles_and_poison_environment(self):
         for role in ['anon','authenticated']:
-            self.deny('SET ROLE '+role+'; SELECT context_retained_video_2131.read_projection(NULL,NULL,NULL)')
+            self.deny('SET ROLE '+role+'; SELECT context_retained_video_2131.read_projection(NULL,NULL,NULL)', '42501')
         self.assertEqual('UTF8',self.sql('SHOW server_encoding'))
         forbidden=['PGSERVICE','PGSERVICEFILE','PGPASSWORD','PGPASSFILE','DATABASE_URL','SUPABASE_SERVICE_ROLE_KEY','DYLD_INSERT_LIBRARIES','LD_PRELOAD','PYTHONPATH','GIT_CONFIG_GLOBAL']
         for name in forbidden:self.assertNotIn(name,os.environ)
