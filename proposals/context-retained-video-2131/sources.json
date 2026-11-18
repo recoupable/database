@@ -140,9 +140,12 @@
     }
   ],
   "qualification": {
-    "status": "planned_order_not_executed",
+    "status": "owned_local_qualification_recipe",
     "prefix": [
-      "proposals/context-retained-video-2131/qualification-bootstrap.sql (new implementation file, hash after authoring)"
+      {
+        "path": "proposals/context-retained-video-2131/qualification-bootstrap.sql",
+        "sha256": "d2c3be8318d3b5b975ed03098c83a082f29aefe8a84b649e505a9f1784888b58"
+      }
     ],
     "normal_prerequisites": [
       {
@@ -305,8 +308,14 @@
       }
     ],
     "suffix": [
-      "proposals/context-retained-video-2131/retained-video.sql (new implementation file, hash after authoring)",
-      "proposals/context-retained-video-2131/fixtures.sql (new implementation file, hash after authoring)"
+      {
+        "path": "proposals/context-retained-video-2131/retained-video.sql",
+        "sha256": "207296c823133abd2532240f608faa6308770baccdc370e0c00c93bea780c3fd"
+      },
+      {
+        "path": "proposals/context-retained-video-2131/fixtures.sql",
+        "sha256": "f02f65fb09c27439105ea9f129cc51111ddf87e4ede6a9da023eb6ca08377eba"
+      }
     ],
     "unchanged_locator_regression_fixture": {
       "repository": "database",

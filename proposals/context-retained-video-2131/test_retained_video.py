@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 import re
+import pathlib
+import shlex
 from pathlib import Path
 import shutil
 import signal
@@ -18,10 +20,25 @@ REPO = HERE.parents[1]
 
 def export_sources(root, env):
     """Resolve only pinned local Git blobs before PostgreSQL starts."""
-    manifest = json.loads((HERE/'sources.json').read_text())
+    manifest_text = (HERE/'sources.json').read_text()
+    manifest = json.loads(manifest_text)
+    local_inputs = manifest['qualification']['prefix'] + manifest['qualification']['suffix']
+    expected_paths = {'proposals/context-retained-video-2131/'+name for name in
+                      ['qualification-bootstrap.sql','retained-video.sql','fixtures.sql']}
+    if len(local_inputs) != 3 or {entry['path'] for entry in local_inputs} != expected_paths:
+        raise RuntimeError('Invalid local qualification source set')
+    verified_local = {}
+    for entry in local_inputs:
+        blob = (REPO/entry['path']).read_bytes()
+        if hashlib.sha256(blob).hexdigest() != entry['sha256']:
+            raise RuntimeError('Local qualification source hash mismatch: '+entry['path'])
+        verified_local[Path(entry['path']).name] = blob
     needed = manifest['qualification']['compatibility_prerequisites'] + [manifest['qualification']['unchanged_locator_regression_fixture']]
     target = root/'sources'
     target.mkdir(mode=0o700)
+    (target/'manifest.json').write_text(manifest_text)
+    for name, blob in verified_local.items():
+        (target/name).write_bytes(blob)
     for entry in needed:
         blob = subprocess.run(['/usr/bin/git', '-C', str(REPO), 'show', entry['commit']+':'+entry['path']], env={**env, 'GIT_CONFIG_NOSYSTEM':'1', 'GIT_CONFIG_GLOBAL':'/dev/null'}, check=True, capture_output=True, timeout=10).stdout
         if env.get('VIDEO_QUALIFICATION_FAULT') == 'source-export' or hashlib.sha256(blob).hexdigest() != entry['sha256']:
@@ -142,13 +159,6 @@ def supervise():
 # Directory/PID-bound cleanup is copied from the pinned source with one receipt correction:
 # cluster_created reports actual directory existence for pre-initdb source-export failure.
 """Verify and stop PostgreSQL bound to one registered directory lease."""
-import json
-import os
-import pathlib
-import shlex
-import signal
-import subprocess
-import time
 
 
 def _process_command(pid):
@@ -231,10 +241,6 @@ def stop_owned_cluster(root, pg_bin, env, worker_pid):
 
 # Reviewed group cleanup, with a narrow PermissionError enumeration adaptation; provenance in sources.json.
 """Quiesce only the dedicated fixture worker process group."""
-import os
-import signal
-import subprocess
-import time
 
 
 def _group_exists(group):
@@ -325,17 +331,19 @@ class Video(unittest.TestCase):
     def setUpClass(cls):
         cls.socket, cls.bin = verify_worker_lease()
         cls.env = {**fixture_environment(Path(cls.socket).parent, cls.bin), 'PGHOST':cls.socket,
-                   'PGPORT':'55473', 'PGDATABASE':'postgres', 'PGOPTIONS':'-c statement_timeout=12000 -c lock_timeout=10000'}
+                   'PGPORT':'55473', 'PGDATABASE':'postgres', 'PGOPTIONS':('-c statement_timeout=12000 -c lock_timeout=10000 '
+                       f'-c video_fixture.expected_data_directory={cls.socket}/pg '
+                       f'-c video_fixture.expected_socket_directory={cls.socket}')}
         # The owned cluster only; profiles use separate databases with identical bootstrap.
         cls.sql('CREATE DATABASE video_normal; CREATE DATABASE video_compat;')
-        manifest = json.loads((HERE/'sources.json').read_text())
+        manifest = json.loads((Path(cls.socket).parent/'sources'/'manifest.json').read_text())
         for profile in ['normal','compatibility']:
             cls.database = 'video_normal' if profile=='normal' else 'video_compat'
-            cls.sql((HERE/'qualification-bootstrap.sql').read_text()) if profile=='normal' else cls.sql((HERE/'qualification-bootstrap.sql').read_text().replace('CREATE ROLE service_role BYPASSRLS;','').replace('CREATE ROLE anon;','').replace('CREATE ROLE authenticated;',''))
+            cls.sql((Path(cls.socket).parent/'sources'/'qualification-bootstrap.sql').read_text()) if profile=='normal' else cls.sql((Path(cls.socket).parent/'sources'/'qualification-bootstrap.sql').read_text().replace('CREATE ROLE service_role BYPASSRLS;','').replace('CREATE ROLE anon;','').replace('CREATE ROLE authenticated;',''))
             for entry in manifest['qualification'][profile+'_prerequisites']:
                 cls.sql((Path(cls.socket).parent/'sources'/Path(entry['path']).name).read_text())
             cls.before_definitions = cls.sql("SELECT pg_get_functiondef('public.claim_context_enrichment(uuid,uuid,jsonb)'::regprocedure)||pg_get_functiondef('public.complete_context_enrichment(uuid,uuid,uuid,jsonb)'::regprocedure)")
-            cls.sql((HERE/'retained-video.sql').read_text())
+            cls.sql((Path(cls.socket).parent/'sources'/'retained-video.sql').read_text())
             after = cls.sql("SELECT pg_get_functiondef('public.claim_context_enrichment(uuid,uuid,jsonb)'::regprocedure)||pg_get_functiondef('public.complete_context_enrichment(uuid,uuid,uuid,jsonb)'::regprocedure)")
             if after != cls.before_definitions: raise AssertionError('Generic enrichment definitions changed')
             denied = cls.sql("SELECT has_schema_privilege('service_role','context_retained_video_2131','USAGE'),has_function_privilege('service_role','context_retained_video_2131.save_projection(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE')")
@@ -343,11 +351,20 @@ class Video(unittest.TestCase):
             # Execute actual role denials before fixture-only grants.
             cls.deny("SET ROLE service_role; SELECT context_retained_video_2131.read_projection(NULL,NULL,NULL)", '42501')
             cls.sql('GRANT USAGE ON SCHEMA context_retained_video_2131 TO service_role; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA context_retained_video_2131 TO service_role;')
-            cls.sql((HERE/'fixtures.sql').read_text())
+            cls.sql((Path(cls.socket).parent/'sources'/'fixtures.sql').read_text())
             regression=(Path(cls.socket).parent/'sources'/'context_video_entry.sql').read_text()
             result=cls.execute('BEGIN;\n'+regression+'\nROLLBACK;')
             if 'PASS: context_video_entry' not in result.stderr: raise AssertionError('Locator fixture did not run')
             if cls.sql('SELECT count(*) FROM public.accounts')!='0': raise AssertionError('Locator rollback not verified')
+        # The fixture's SQL guard also refuses a different owned database before TRUNCATE.
+        cls.database='postgres'
+        cls.sql((Path(cls.socket).parent/'sources'/'fixtures.sql').read_text())
+        cls.sql("CREATE TABLE public.accounts(id text); CREATE TABLE public.context_resources(id text); CREATE TABLE public.context_sources(id text); INSERT INTO public.accounts VALUES('account sentinel'); INSERT INTO public.context_resources VALUES('resource sentinel'); INSERT INTO public.context_sources VALUES('source sentinel'); INSERT INTO video_fixture.state VALUES('true');")
+        sentinel_sql="SELECT jsonb_build_array((SELECT jsonb_agg(a) FROM public.accounts a),(SELECT jsonb_agg(r) FROM public.context_resources r),(SELECT jsonb_agg(s) FROM public.context_sources s),(SELECT jsonb_agg(f) FROM video_fixture.state f))"
+        before=cls.sql(sentinel_sql)
+        cls.deny('SELECT video_fixture.seed()', '42501', 'Video fixture seeding is test-only')
+        if cls.sql(sentinel_sql) != before:
+            raise AssertionError('Rejected fixture seeding changed state')
         cls.database='video_normal'
 
     @classmethod
@@ -659,9 +676,29 @@ class Video(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'got 42883'):
             self.deny('SELECT video_fixture.no_such_function()','42501')
 
+    def test_unqualified_profile_preserves_seeded_rows(self):
+        from unittest.mock import patch
+        snapshot="SELECT jsonb_build_array((SELECT jsonb_agg(a ORDER BY id) FROM public.accounts a),(SELECT jsonb_agg(r ORDER BY id) FROM public.context_resources r),(SELECT jsonb_agg(s ORDER BY id) FROM public.context_sources s),(SELECT jsonb_agg(f) FROM video_fixture.state f))"
+        before=self.sql(snapshot)
+        # Correct profile name alone cannot qualify this connection for destructive seeding.
+        with patch.dict(self.env,{'PGOPTIONS':'-c statement_timeout=12000 -c lock_timeout=10000'}):
+            self.deny('SELECT video_fixture.seed()', '42501', 'Video fixture seeding is test-only')
+            self.assertEqual(before,self.sql(snapshot))
+
+    def test_local_sql_manifest_rejects_changed_hash_before_export(self):
+        from unittest.mock import patch
+        manifest=json.loads((HERE/'sources.json').read_text())
+        manifest['qualification']['prefix'][0]['sha256']='0'*64
+        with patch.object(json,'loads',return_value=manifest), patch.object(subprocess,'run') as run:
+            with self.assertRaisesRegex(RuntimeError,'Local qualification source hash mismatch'):
+                export_sources(Path(self.socket).parent,self.env)
+            run.assert_not_called()
+
     def test_browser_roles_and_poison_environment(self):
         for role in ['anon','authenticated']:
             self.deny('SET ROLE '+role+'; SELECT context_retained_video_2131.read_projection(NULL,NULL,NULL)', '42501')
+        for role in ['service_role','anon','authenticated']:
+            self.deny('SET ROLE '+role+'; SELECT video_fixture.seed()', '42501')
         self.assertEqual('UTF8',self.sql('SHOW server_encoding'))
         forbidden=['PGSERVICE','PGSERVICEFILE','PGPASSWORD','PGPASSFILE','DATABASE_URL','SUPABASE_SERVICE_ROLE_KEY','DYLD_INSERT_LIBRARIES','LD_PRELOAD','PYTHONPATH','GIT_CONFIG_GLOBAL']
         for name in forbidden:self.assertNotIn(name,os.environ)

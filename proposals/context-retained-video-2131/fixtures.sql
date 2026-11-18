@@ -9,6 +9,13 @@ DECLARE owner_id uuid:='10000000-0000-4000-8000-000000000001'; actor uuid:='1000
  source uuid:=gen_random_uuid(); dependency uuid:=gen_random_uuid(); snapshot uuid:=gen_random_uuid(); version uuid:=gen_random_uuid();
  e jsonb; manifest jsonb; state jsonb;
 BEGIN
+ IF current_database() NOT IN ('video_normal','video_compat')
+    OR inet_server_addr() IS NOT NULL
+    OR current_setting('listen_addresses') <> ''
+    OR current_setting('video_fixture.expected_data_directory',true) IS DISTINCT FROM current_setting('data_directory')
+    OR current_setting('video_fixture.expected_socket_directory',true) IS DISTINCT FROM current_setting('unix_socket_directories') THEN
+  RAISE EXCEPTION 'Video fixture seeding is test-only' USING ERRCODE='42501';
+ END IF;
  TRUNCATE public.accounts,public.context_resources,public.context_sources CASCADE;
  TRUNCATE video_fixture.state,public.account_organization_ids;
  INSERT INTO public.accounts(id,name) VALUES(owner_id,'Fixture owner'),(actor,'Fixture member'),(outsider,'Fixture outsider');
@@ -34,5 +41,6 @@ BEGIN
  INSERT INTO video_fixture.state VALUES(state);
  RETURN state;
 END $$;
+REVOKE ALL ON FUNCTION video_fixture.seed() FROM PUBLIC,anon,authenticated,service_role;
 CREATE FUNCTION video_fixture.raise_fault() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'fixture write fault'; END $$;
