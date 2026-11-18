@@ -191,8 +191,13 @@ security boundary against a malicious local owner who can edit the runner itself
 
 SQL, process startup, worker duration and cleanup have bounded waits. Scoped SIGTERM/
 SIGINT unwind cleanup; the worker group is quiesced even if its leader exited. The
-exact reviewed worker-group and directory/PID cleanup functions are embedded with source
-hashes in `sources.json`. That reuse alone does not inherit all prior supervisor tests.
+reviewed directory/PID cleanup is embedded unchanged. The worker-group helper has one
+explicitly recorded adaptation after an actual host PermissionError on killpg(group,0):
+only that denial falls back to checked, complete numeric `/bin/ps -axo pgid=` enumeration
+for the exact registered group. Command failure, malformed/empty output or timeout fails
+closed. A present group still needs successful signaling; absence never substitutes for
+independent postmaster/socket checks. Original provenance and the adaptation are recorded
+in `sources.json`. That reuse alone does not inherit all prior supervisor tests.
 This candidate separately exercises signal, worker timeout and exited-worker-with-child
 faults via `REGISTRATION_QUALIFICATION_FAULT=signal|timeout|worker-exit`, using only its
 own disposable cluster. Ambiguous ownership leaves files intact with a reported path.

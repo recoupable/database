@@ -58,6 +58,7 @@
     "repository": "recoupable/api",
     "commit": "ddd614c998ffdbc837f8bfde58333350c36d648c",
     "path": "scripts/sites-evidence-sql-bridge/quiesce_worker.py",
-    "sha256": "03a15bdb69513d2391bd5df7602f2b893b67d82bdce8dab3ec339f5968dd2f05"
+    "sha256": "03a15bdb69513d2391bd5df7602f2b893b67d82bdce8dab3ec339f5968dd2f05",
+    "adaptation": "_group_exists: only on killpg(group,0) PermissionError, checked complete numeric /bin/ps -axo pgid= enumeration establishes exact group presence; failures/malformed output/timeouts preserve files. Other helper logic unchanged."
   }
 }

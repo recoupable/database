@@ -29,6 +29,21 @@ def payload():
         {'origin': 'https://preview.example', 'hostname': 'preview.example', 'return_urls': []}]}
 
 
+class GroupProbe(unittest.TestCase):
+    def test_permission_denied_probe_requires_checked_group_enumeration(self):
+        from unittest.mock import patch
+        with patch.object(os, 'killpg', side_effect=PermissionError('synthetic probe denial')):
+            for stdout, present in [('101\n202\n', False), ('101\n4242\n', True)]:
+                with patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout, '')) as run:
+                    self.assertEqual(_group_exists(4242), present)
+                    run.assert_called_once_with(['/bin/ps', '-axo', 'pgid='], capture_output=True, text=True, timeout=5)
+            for status, stdout in [(1, ''), (0, ''), (0, 'not-a-group\n')]:
+                with patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], status, stdout, '')):
+                    with self.assertRaises(RuntimeError): _group_exists(4242)
+            with patch.object(subprocess, 'run', side_effect=subprocess.TimeoutExpired('ps', 5)):
+                with self.assertRaises(subprocess.TimeoutExpired): _group_exists(4242)
+
+
 class Registration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -493,7 +508,7 @@ def stop_owned_cluster(root, pg_bin, env, worker_pid):
             'postmaster_pid': pid, 'discovered_postmasters': discovered,
             'postmaster_absent': True, 'socket_absent': True}
 
-# Reviewed group cleanup, copied byte-for-byte; provenance in sources.json.
+# Reviewed group cleanup, with a narrow PermissionError enumeration adaptation; provenance in sources.json.
 """Quiesce only the dedicated fixture worker process group."""
 import os
 import signal
@@ -507,6 +522,16 @@ def _group_exists(group):
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # An actual exited-worker probe was denied by the host. Require independent
+        # complete process metadata; never infer absence from a signal denial.
+        result = subprocess.run(['/bin/ps', '-axo', 'pgid='], capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            raise RuntimeError('Cannot enumerate worker groups; preserve owned files')
+        groups = result.stdout.splitlines()
+        if not groups or any(not line.strip().isascii() or not line.strip().isdigit() for line in groups):
+            raise RuntimeError('Invalid worker group enumeration; preserve owned files')
+        return group in {int(line.strip()) for line in groups}
 
 
 def quiesce_worker(worker):
