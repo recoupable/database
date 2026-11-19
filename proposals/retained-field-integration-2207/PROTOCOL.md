@@ -92,3 +92,94 @@ than inventing per-field object IDs. App part 256 KiB, controls 64 KiB and comma
 128 KiB limits remain unchanged; a 768 KiB evidence envelope is not a chat payload.
 Do not copy all retained tuples into saved controls or equate document revision with
 surface revision. This suite does not prove deployed behavior or provider execution.
+
+## Genuine receipt selection consumer (source-only increment, 2026-11-19)
+
+`selection-source.json` pins the separate API proposal consumer. The original
+adopted evaluator checkout and all three original method hashes remain independently
+required by `test_integration.py`; they are not replaced or widened. The added
+consumer reads an existing current `reconcile_retention` receipt, projects its exact
+Context selection, rechecks the original selection via `read_binding`, and evaluates
+inside the original held transaction. No raw report, new authority store, latest
+upgrade, implicit retain/expand or actor substitution is used. No SQL definition,
+grant, route or production transport is introduced.
+
+`test_selection_transport.py` builds the exact new API consumer plus its unchanged
+real evaluator and checks the actual generated inner fieldContext fixture. These
+five runnable **pure synthetic transport** tests do not initialize PostgreSQL or
+claim authenticated source authority. Use the frozen source checkout with its
+existing dependencies:
+
+```sh
+CATALOG_SELECTION_SOURCE=/path/to/frozen/api python3 proposals/retained-field-integration-2207/test_selection_transport.py
+```
+
+`test_selection_consumer.py` extends the existing actual database harness with five
+new deferred scenarios: current genuine receipt → exact inner response, missing key
+and wrong actor, withdrawn/removed/member/expanded-edge loss, superseded result,
+and supported stream correction refusing the original selection. It calls actual
+reconciliation and source reads; no new permissive SQL adapter is installed. The
+SQL cases default to skipped. The focused local qualification below subsequently
+executed all five; later runs must explicitly set `CATALOG_SELECTION_SQL_QUALIFICATION=1`;
+that also requires `CATALOG_API_SOURCE` at the original adopted evaluator pin and
+`CATALOG_SELECTION_SOURCE` at the new companion pin. The five sequential cases do
+not qualify concurrent max-eight batch locking or production transaction transport.
+
+The synthetic actor/session/chat/assistant strings in this harness are test context,
+not session authentication proof. Returning a real selection also is not a lease:
+the next read reauthorizes it. `fieldContext` is exactly the inner projection response
+without `state`; UI owns its explicitly versioned offline envelope. Schema-v1 is
+unchanged. No initial-send/replay/history/text/export/model disclosure path is enabled;
+these paths must jointly withhold projections on current denial before live routing.
+
+### Focused local qualification — 2026-11-19
+
+All five new SelectionConsumer scenarios passed without skips against Database
+`1185562def1bdbc49b70cdc7d889ba52b352f03b`, API consumer
+`4ca23de6a6cea3226c2f0392a454eb57861aedf8` and original evaluator
+`6ba799dbb67be284adcd6f8bcd8fcde2faa6c2b8`, using installed PostgreSQL 17.7.
+Only those five tests ran; inherited unrelated suites were excluded. The default
+PostgreSQL 14 server failed before startup because its ICU74 library was absent;
+no tools were installed, and its temporary directory was removed.
+
+The successful run cleared inherited connection/credential settings, initialized a
+new synthetic temporary cluster, verified its postmaster/data-directory/socket
+identity and empty listen_addresses before fixture SQL, and checked zero TCP
+listeners. All schema/role/data writes stayed in that disposable database. Cleanup
+verified the owned process, Unix socket, PID file and temporary directory were gone.
+No hosted DSN, existing database, account credential, runtime route, production
+apply/grant/enrollment or activation was used. This closes the five sequential
+consumer scenarios only; batch concurrency, authenticated production transport and
+publication/history disclosure qualification remain outstanding.
+
+### Size-refusal successor — 2026-11-19
+
+The companion API `a7ba45167d159428bfac90fa6cb2fa58df88d360` preserves the
+registered evaluator's `size_limit` refusal as `{state:"invalid"}`. Missing/stale/
+withdrawn/unauthorized bindings stay unavailable and operational failures stay
+errors. Six pure compiled transport tests pass, including real UTF-8 inputs over
+512 KiB and over 768 KiB that return only the invalid state. The inner UI fixture
+and evaluator/recipe/helper bytes are unchanged. Selection-source pins now target
+this successor.
+
+The five real PostgreSQL17.7 passes above remain attributed to their exact original
+API4ca23de6/Database1185562 sources. They were not rerun or relabelled as successor
+qualification. No SQL semantics or actual SQL test scenario changed in this repair.
+
+### Operational-refusal review successor — 2026-11-19
+
+The companion pin now targets API `20784986cd08d8651545d71d024b98c223ca7866`.
+`helper_changed` and `source_error` preserve the operational `error` state;
+`size_limit` remains `invalid`, and ordinary denied bindings remain `unavailable`.
+Every refusal withholds values and diagnostics. Coverage comparison state is a
+closed comparable/incomplete union checked before projection. The API README
+links the private Database proposal and distinguishes it from a connected live
+API transport. Seven pure compiled transport tests pass, including an actual
+helper-integrity mismatch in temporary bundle output, restored after the test.
+The five actual PostgreSQL passes remain attributed only to the original heads
+above; no SQL definitions or actual SQL scenarios changed or were rerun.
+
+Final type follow-up: `selection-source.json` pins the successor with explicit
+reference authority/kind and source literal types. The consumer checks reference
+literals before projection. The seven compiled tests and unchanged fixture still
+pass; original SQL qualification attribution remains unchanged.
