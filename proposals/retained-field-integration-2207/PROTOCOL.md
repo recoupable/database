@@ -178,3 +178,8 @@ API transport. Seven pure compiled transport tests pass, including an actual
 helper-integrity mismatch in temporary bundle output, restored after the test.
 The five actual PostgreSQL passes remain attributed only to the original heads
 above; no SQL definitions or actual SQL scenarios changed or were rerun.
+
+Final type follow-up: `selection-source.json` pins the successor with explicit
+reference authority/kind and source literal types. The consumer checks reference
+literals before projection. The seven compiled tests and unchanged fixture still
+pass; original SQL qualification attribution remains unchanged.
