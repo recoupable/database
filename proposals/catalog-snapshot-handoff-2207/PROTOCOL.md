@@ -13,7 +13,12 @@ The envelope remains server-only durable workflow output, outside schema-v1 Surf
 A default-off API step may hand it to this RPC only after required fenced assistant
 persistence and before fence release. Original actor/session/chat/message/epoch/
 owner/run, immutable source revision 1, exact source bytes and surface bytes are
-bound. The receipt is source retention, never working controls saved or approval.
+bound. Under those locks, the assistant must have a `message_epochs` row matching
+its message ID, chat ID and current/captured epoch. Missing, foreign-chat or older
+generation anchors fail before the source authorizer and before identical receipt
+replay. An exact duplicate insert acknowledged by 636 does not adopt an old anchor
+into a newer writer generation. The receipt is source retention, never working
+controls saved or approval.
 Same writer/exact bytes is idempotent. Different source/surface at the anchor is a
 40001 conflict, never an overwrite. Session/chat/fence/message locks serialize
 concurrent attempts. Deletes cascade source records with their message anchor;
@@ -42,3 +47,19 @@ No auto-retry on transport ambiguity, no latest lookup, no provider recollection
 no private-to-public fallback. Failure after message persistence may leave an
 assistant message without a retained-source receipt; that is NOT durable working
 state and must never be promoted to saved controls.
+
+## Anchor generation repair validation
+
+`test_source_boundary.py` checks the actual three-part generation guard and its
+position before source authorization and replay (five static tests). The guard
+regression failed on the original proposal and passes with this repair.
+
+`test_anchor_generation.py` adds five deferred disposable-PostgreSQL cases: current
+epoch retention plus exact replay, old-epoch reused-message refusal before a denying
+authorizer, old-epoch refusal before an existing identical receipt, missing epoch,
+and foreign-chat epoch. It reuses the actual 636 fixture and both proposal files;
+the synthetic source authorizer is only a mechanics seam, never real source proof.
+The cases default to skipped and were not executed for this source-only repair.
+Only separately authorized SQL qualification may set
+`CATALOG_RETENTION_SQL_QUALIFICATION=1` and run them. No grants or adapter replacement
+from that disposable test setup belong in the proposal or an activation plan.

@@ -58,6 +58,8 @@ BEGIN
   RAISE EXCEPTION 'stale writer' USING ERRCODE='40001'; END IF;
  SELECT * INTO msg FROM public.chat_messages WHERE id=p_message AND chat_id=p_chat FOR UPDATE;
  IF NOT FOUND OR msg.role<>'assistant' THEN RAISE EXCEPTION 'unavailable' USING ERRCODE='P0002'; END IF;
+ -- A live writer cannot adopt an assistant persisted by an earlier generation.
+ IF NOT EXISTS(SELECT 1 FROM chat_fence.message_epochs WHERE message_id=msg.id AND chat_id=p_chat AND epoch=s.epoch) THEN RAISE EXCEPTION 'prior message generation' USING ERRCODE='40001'; END IF;
  part:=chat_fence.surface_part(msg.parts);
  IF part->'data' IS DISTINCT FROM surface THEN
   RAISE EXCEPTION 'persisted snapshot differs' USING ERRCODE='40001'; END IF;
