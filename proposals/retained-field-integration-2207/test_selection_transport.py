@@ -48,6 +48,17 @@ class SelectionTransport(unittest.TestCase):
     def test_current_source_refusal_redacts_entire_result(self):
         self.assertEqual(self.consume({**self.input,'envelope':None}),{'state':'unavailable'})
 
+    def test_oversized_utf8_authority_evidence_returns_invalid_without_leak(self):
+        for characters in (270000, 400000):
+            with self.subTest(characters=characters):
+                payload=copy.deepcopy(self.input)
+                payload['envelope']['evidence']['providerRecordingId']='é'*characters
+                size=len(json.dumps(payload['envelope'],ensure_ascii=False).encode('utf8'))
+                self.assertGreater(size,512*1024)
+                if characters==270000:self.assertLess(size,768*1024)
+                else:self.assertGreater(size,768*1024)
+                self.assertEqual(self.consume(payload),{'state':'invalid'})
+
     def test_invalid_query_never_uses_cached_amount(self):
         self.assertEqual(self.consume({**self.input,'query':{**self.input['query'],'days':0}}),{'state':'invalid'})
 

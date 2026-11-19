@@ -1,8 +1,8 @@
 {
-  "head": "4ca23de6a6cea3226c2f0392a454eb57861aedf8",
+  "head": "a7ba45167d159428bfac90fa6cb2fa58df88d360",
   "files": {
     "scripts/proposals/catalog-retained-selection/readRetainedFieldSelection.ts": "1096979cc82d034ad08ddcb6db8a7e04a0c91dbe5a332ed3f40c98120e4c996a",
-    "scripts/proposals/catalog-retained-selection/consumeRetainedField.ts": "5d0523ea3b3f725d1de36db1b958c2db15d53bfe73b1000611db33bf1b8d1981",
+    "scripts/proposals/catalog-retained-selection/consumeRetainedField.ts": "766676fa07dd40edfa5b29425329058c77d31e47fac45d3eacb0f0d0aa627e71",
     "scripts/proposals/catalog-retained-selection/schemas.ts": "b5cd78e40bbdd9e83914bb729795706dd14d81988679512dc4a5d95943369e88",
     "scripts/proposals/catalog-retained-selection/fixtures/fieldContext.json": "ed979fc2ea72c3a3e51deb2ba259980f171a550b88fb488afb783a70e02ec322",
     "scripts/proposals/catalog-retained-selection/fixtures/synthetic-authority-input.json": "f498cff7bdef6154382a98815162d140e6660e14ace885e7bee8e56334fcd522"

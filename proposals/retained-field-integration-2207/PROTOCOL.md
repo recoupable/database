@@ -151,3 +151,17 @@ No hosted DSN, existing database, account credential, runtime route, production
 apply/grant/enrollment or activation was used. This closes the five sequential
 consumer scenarios only; batch concurrency, authenticated production transport and
 publication/history disclosure qualification remain outstanding.
+
+### Size-refusal successor — 2026-11-19
+
+The companion API `a7ba45167d159428bfac90fa6cb2fa58df88d360` preserves the
+registered evaluator's `size_limit` refusal as `{state:"invalid"}`. Missing/stale/
+withdrawn/unauthorized bindings stay unavailable and operational failures stay
+errors. Six pure compiled transport tests pass, including real UTF-8 inputs over
+512 KiB and over 768 KiB that return only the invalid state. The inner UI fixture
+and evaluator/recipe/helper bytes are unchanged. Selection-source pins now target
+this successor.
+
+The five real PostgreSQL17.7 passes above remain attributed to their exact original
+API4ca23de6/Database1185562 sources. They were not rerun or relabelled as successor
+qualification. No SQL semantics or actual SQL test scenario changed in this repair.
