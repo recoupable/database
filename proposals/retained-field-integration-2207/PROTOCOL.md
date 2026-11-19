@@ -92,3 +92,42 @@ than inventing per-field object IDs. App part 256 KiB, controls 64 KiB and comma
 128 KiB limits remain unchanged; a 768 KiB evidence envelope is not a chat payload.
 Do not copy all retained tuples into saved controls or equate document revision with
 surface revision. This suite does not prove deployed behavior or provider execution.
+
+## Genuine receipt selection consumer (source-only increment, 2026-11-19)
+
+`selection-source.json` pins the separate API proposal consumer. The original
+adopted evaluator checkout and all three original method hashes remain independently
+required by `test_integration.py`; they are not replaced or widened. The added
+consumer reads an existing current `reconcile_retention` receipt, projects its exact
+Context selection, rechecks the original selection via `read_binding`, and evaluates
+inside the original held transaction. No raw report, new authority store, latest
+upgrade, implicit retain/expand or actor substitution is used. No SQL definition,
+grant, route or production transport is introduced.
+
+`test_selection_transport.py` builds the exact new API consumer plus its unchanged
+real evaluator and checks the actual generated inner fieldContext fixture. These
+five runnable **pure synthetic transport** tests do not initialize PostgreSQL or
+claim authenticated source authority. Use the frozen source checkout with its
+existing dependencies:
+
+```sh
+CATALOG_SELECTION_SOURCE=/path/to/frozen/api python3 proposals/retained-field-integration-2207/test_selection_transport.py
+```
+
+`test_selection_consumer.py` extends the existing actual database harness with five
+new deferred scenarios: current genuine receipt → exact inner response, missing key
+and wrong actor, withdrawn/removed/member/expanded-edge loss, superseded result,
+and supported stream correction refusing the original selection. It calls actual
+reconciliation and source reads; no new permissive SQL adapter is installed. The
+SQL cases default to skipped and have NOT been executed for this increment. Only
+separately authorized qualification may set `CATALOG_SELECTION_SQL_QUALIFICATION=1`;
+that also requires `CATALOG_API_SOURCE` at the original adopted evaluator pin and
+`CATALOG_SELECTION_SOURCE` at the new companion pin. The five sequential cases do
+not qualify concurrent max-eight batch locking or production transaction transport.
+
+The synthetic actor/session/chat/assistant strings in this harness are test context,
+not session authentication proof. Returning a real selection also is not a lease:
+the next read reauthorizes it. `fieldContext` is exactly the inner projection response
+without `state`; UI owns its explicitly versioned offline envelope. Schema-v1 is
+unchanged. No initial-send/replay/history/text/export/model disclosure path is enabled;
+these paths must jointly withhold projections on current denial before live routing.
