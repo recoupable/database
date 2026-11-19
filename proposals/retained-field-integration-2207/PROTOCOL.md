@@ -119,8 +119,8 @@ new deferred scenarios: current genuine receipt → exact inner response, missin
 and wrong actor, withdrawn/removed/member/expanded-edge loss, superseded result,
 and supported stream correction refusing the original selection. It calls actual
 reconciliation and source reads; no new permissive SQL adapter is installed. The
-SQL cases default to skipped and have NOT been executed for this increment. Only
-separately authorized qualification may set `CATALOG_SELECTION_SQL_QUALIFICATION=1`;
+SQL cases default to skipped. The focused local qualification below subsequently
+executed all five; later runs must explicitly set `CATALOG_SELECTION_SQL_QUALIFICATION=1`;
 that also requires `CATALOG_API_SOURCE` at the original adopted evaluator pin and
 `CATALOG_SELECTION_SOURCE` at the new companion pin. The five sequential cases do
 not qualify concurrent max-eight batch locking or production transaction transport.
@@ -131,3 +131,23 @@ the next read reauthorizes it. `fieldContext` is exactly the inner projection re
 without `state`; UI owns its explicitly versioned offline envelope. Schema-v1 is
 unchanged. No initial-send/replay/history/text/export/model disclosure path is enabled;
 these paths must jointly withhold projections on current denial before live routing.
+
+### Focused local qualification — 2026-11-19
+
+All five new SelectionConsumer scenarios passed without skips against Database
+`1185562def1bdbc49b70cdc7d889ba52b352f03b`, API consumer
+`4ca23de6a6cea3226c2f0392a454eb57861aedf8` and original evaluator
+`6ba799dbb67be284adcd6f8bcd8fcde2faa6c2b8`, using installed PostgreSQL 17.7.
+Only those five tests ran; inherited unrelated suites were excluded. The default
+PostgreSQL 14 server failed before startup because its ICU74 library was absent;
+no tools were installed, and its temporary directory was removed.
+
+The successful run cleared inherited connection/credential settings, initialized a
+new synthetic temporary cluster, verified its postmaster/data-directory/socket
+identity and empty listen_addresses before fixture SQL, and checked zero TCP
+listeners. All schema/role/data writes stayed in that disposable database. Cleanup
+verified the owned process, Unix socket, PID file and temporary directory were gone.
+No hosted DSN, existing database, account credential, runtime route, production
+apply/grant/enrollment or activation was used. This closes the five sequential
+consumer scenarios only; batch concurrency, authenticated production transport and
+publication/history disclosure qualification remain outstanding.
