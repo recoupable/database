@@ -1,10 +1,12 @@
 {
-  "head": "a7ba45167d159428bfac90fa6cb2fa58df88d360",
+  "head": "20784986cd08d8651545d71d024b98c223ca7866",
   "files": {
     "scripts/proposals/catalog-retained-selection/readRetainedFieldSelection.ts": "1096979cc82d034ad08ddcb6db8a7e04a0c91dbe5a332ed3f40c98120e4c996a",
-    "scripts/proposals/catalog-retained-selection/consumeRetainedField.ts": "766676fa07dd40edfa5b29425329058c77d31e47fac45d3eacb0f0d0aa627e71",
+    "scripts/proposals/catalog-retained-selection/consumeRetainedField.ts": "b87d90e9adf195ef0897c53f4340918fa1d7ccbf5d5bdc2ddf98a62460ab0d64",
     "scripts/proposals/catalog-retained-selection/schemas.ts": "b5cd78e40bbdd9e83914bb729795706dd14d81988679512dc4a5d95943369e88",
     "scripts/proposals/catalog-retained-selection/fixtures/fieldContext.json": "ed979fc2ea72c3a3e51deb2ba259980f171a550b88fb488afb783a70e02ec322",
-    "scripts/proposals/catalog-retained-selection/fixtures/synthetic-authority-input.json": "f498cff7bdef6154382a98815162d140e6660e14ace885e7bee8e56334fcd522"
+    "scripts/proposals/catalog-retained-selection/fixtures/synthetic-authority-input.json": "f498cff7bdef6154382a98815162d140e6660e14ace885e7bee8e56334fcd522",
+    "scripts/proposals/catalog-retained-selection/classifyRetainedFieldRefusal.ts": "9a50a90b7701ac21897fdcee44d5c4e60567b00c38d504daf14acc25b04a6d13",
+    "scripts/proposals/catalog-retained-selection/retainedFieldTypes.ts": "a22e774b0cb34843b916c326404763e75f6c3833e201e6ba1602c5f30ca26883"
   }
 }

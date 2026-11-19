@@ -59,6 +59,15 @@ class SelectionTransport(unittest.TestCase):
                 else:self.assertGreater(size,768*1024)
                 self.assertEqual(self.consume(payload),{'state':'invalid'})
 
+    def test_actual_helper_integrity_failure_is_error(self):
+        helper=Path(self.output.name)/'lib/catalog/compareSpotifyDailyStreams.ts'
+        original=helper.read_bytes()
+        try:
+            helper.write_bytes(original+b'\n// synthetic integrity mismatch\n')
+            self.assertEqual(self.consume(self.input),{'state':'error'})
+        finally:
+            helper.write_bytes(original)
+
     def test_invalid_query_never_uses_cached_amount(self):
         self.assertEqual(self.consume({**self.input,'query':{**self.input['query'],'days':0}}),{'state':'invalid'})
 

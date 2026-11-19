@@ -165,3 +165,16 @@ this successor.
 The five real PostgreSQL17.7 passes above remain attributed to their exact original
 API4ca23de6/Database1185562 sources. They were not rerun or relabelled as successor
 qualification. No SQL semantics or actual SQL test scenario changed in this repair.
+
+### Operational-refusal review successor — 2026-11-19
+
+The companion pin now targets API `20784986cd08d8651545d71d024b98c223ca7866`.
+`helper_changed` and `source_error` preserve the operational `error` state;
+`size_limit` remains `invalid`, and ordinary denied bindings remain `unavailable`.
+Every refusal withholds values and diagnostics. Coverage comparison state is a
+closed comparable/incomplete union checked before projection. The API README
+links the private Database proposal and distinguishes it from a connected live
+API transport. Seven pure compiled transport tests pass, including an actual
+helper-integrity mismatch in temporary bundle output, restored after the test.
+The five actual PostgreSQL passes remain attributed only to the original heads
+above; no SQL definitions or actual SQL scenarios changed or were rerun.
